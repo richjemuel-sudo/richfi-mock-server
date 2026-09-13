@@ -1,0 +1,12 @@
+{
+  "name": "richfi-mock-server",
+  "version": "1.0.0",
+  "description": "Mock backend for testing RichFi piso wifi NodeMCU + portal before flashing OpenWRT",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}
