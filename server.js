@@ -4,6 +4,8 @@ const path = require("path");
 const app = express();
 app.use(express.static(path.join(__dirname, "public")));
 const PORT = 3000;
+app.use(express.json());
+
 
 /*
 |--------------------------------------------------------------------------
@@ -11,25 +13,11 @@ const PORT = 3000;
 |--------------------------------------------------------------------------
 */
 
-const CONFIG = {
-  rates: [
-    {
-      peso: 1,
-      seconds: 12 * 60,
-      label: "1 peso / 12 minutes",
-    },
-    {
-      peso: 5,
-      seconds: 2 * 60 * 60,
-      label: "5 pesos / 2 hours",
-    },
-    {
-      peso: 10,
-      seconds: 5 * 60 * 60,
-      label: "10 pesos / 5 hours",
-    },
-  ],
-};
+let RATES = [
+  { peso: 1, seconds: 12 * 60, label: "1 peso / 12 minutes" },
+  { peso: 5, seconds: 2 * 60 * 60, label: "5 pesos / 2 hours" },
+  { peso: 10, seconds: 5 * 60 * 60, label: "10 pesos / 5 hours" },
+];
 
 /*
 |--------------------------------------------------------------------------
@@ -63,12 +51,48 @@ let esp8266LastSeen = Date.now();
 
 let waitingClientMac = null;
 let waitingSince = null;
+let paymentTotal = 0;
+
+const PAYMENT_LOCK_TIMEOUT_MS = 45000; // slightly longer than the 30s frontend countdown
 
 /*
 |--------------------------------------------------------------------------
 | Helper Functions
 |--------------------------------------------------------------------------
 */
+
+const fs = require("fs");
+const SESSIONS_FILE = "./sessions.json";
+
+function saveSessions() {
+  const obj = Object.fromEntries(sessions);
+  fs.writeFileSync(SESSIONS_FILE, JSON.stringify(obj));
+}
+
+
+// ------ Wifi rates----------
+function getRate(peso) {
+  return RATES.find((rate) => rate.peso === Number(peso));
+}
+
+function loadSessions() {
+  if (fs.existsSync(SESSIONS_FILE)) {
+    const obj = JSON.parse(fs.readFileSync(SESSIONS_FILE, "utf8"));
+    for (const [mac, session] of Object.entries(obj)) {
+      sessions.set(mac, session);
+    }
+  }
+}
+
+loadSessions(); // call once at startup, before app.listen
+
+function releaseStaleLock() {
+  if (waitingClientMac && Date.now() - waitingSince > PAYMENT_LOCK_TIMEOUT_MS) {
+    console.log(`[PAYMENT] stale lock released for mac=${waitingClientMac}`);
+    waitingClientMac = null;
+    waitingSince = null;
+  }
+}
 
 function normalizeMac(mac) {
   if (!mac) return "";
@@ -85,18 +109,12 @@ function getRate(peso) {
 }
 
 function getRemainingSeconds(session) {
-  if (!session) {
-    return 0;
-  }
+  if (!session) return 0;
+  if (session.isPaused) return session.pausedRemaining || 0;
+  if (!session.expiresAt) return 0;
 
   const now = Date.now();
-
-  const remaining = Math.max(
-    0,
-    Math.floor((session.expiresAt - now) / 1000)
-  );
-
-  return remaining;
+  return Math.max(0, Math.floor((session.expiresAt - now) / 1000));
 }
 
 function getOrCreateSession(mac) {
@@ -142,7 +160,8 @@ app.get("/cgi-bin/health", (req, res) => {
 |--------------------------------------------------------------------------
 */
 
-app.get("/cgi-bin/pisowifi", (req, res) => {
+
+function handlePisowifi(req, res) {
   const action = req.query.action;
 
   switch (action) {
@@ -156,22 +175,19 @@ app.get("/cgi-bin/pisowifi", (req, res) => {
       const mac = normalizeMac(req.query.mac);
 
       if (!mac) {
-        return res.status(400).json({
-          status: "error",
-          message: "MAC address is required",
-        });
+        return res.status(400).json({ status: "error", message: "MAC address is required" });
       }
 
       const session = sessions.get(mac);
-
-      const secondsRemaining =
-        getRemainingSeconds(session);
+      const secondsRemaining = getRemainingSeconds(session);
 
       if (secondsRemaining > 0) {
         return res.json({
           status: "authorized",
           mac,
           seconds_remaining: secondsRemaining,
+          payment_total: mac === waitingClientMac ? paymentTotal : 0,
+          is_paused: session ? !!session.isPaused : false,
         });
       }
 
@@ -179,6 +195,8 @@ app.get("/cgi-bin/pisowifi", (req, res) => {
         status: "unauthorized",
         mac,
         seconds_remaining: 0,
+        payment_total: 0,
+        is_paused: session ? !!session.isPaused : false,
       });
     }
 
@@ -189,43 +207,79 @@ app.get("/cgi-bin/pisowifi", (req, res) => {
     */
 
     case "rates": {
-      return res.json({
-        status: "ok",
-        rates: CONFIG.rates,
-      });
+      return res.json({ status: "ok", rates: RATES });
     }
 
-    /*
+    //------------------------- SAVE RATES -------------------------------------
+    case "update_rates": {
+    let body = "";
+    req.on("data", chunk => { body += chunk; });
+    req.on("end", () => {
+      try {
+        const parsed = JSON.parse(body);
+
+        if (!Array.isArray(parsed) || parsed.length === 0) {
+          return res.status(400).json({ status: "error", message: "Rates array required" });
+        }
+
+        const newRates = parsed.map(r => ({
+          peso: Number(r.price),
+          seconds: Math.round(Number(r.minutes) * 60),
+          label: r.name || `${r.price} peso / ${r.minutes} minutes`,
+        }));
+
+        // Basic validation — reject if any value is invalid
+        for (const r of newRates) {
+          if (!r.peso || r.peso <= 0 || !r.seconds || r.seconds <= 0) {
+            return res.status(400).json({ status: "error", message: "Invalid rate values" });
+          }
+        }
+
+        RATES = newRates;
+        console.log(`[RATES] updated: ${JSON.stringify(RATES)}`);
+
+        return res.json({ status: "ok", rates: RATES });
+
+      } catch (err) {
+        return res.status(400).json({ status: "error", message: "Invalid JSON body" });
+      }
+    });
+    return; // important: don't fall through to default, since response is async
+  }
+/*
 |--------------------------------------------------------------------------
 | START PAYMENT
 |--------------------------------------------------------------------------
 */
+    case "start_payment": {
+      const mac = normalizeMac(req.query.mac);
 
-case "start_payment": {
+      if (!mac) {
+        return res.status(400).json({
+          status: "error",
+          message: "MAC address is required",
+        });
+      }
 
-  const mac = normalizeMac(req.query.mac);
+      releaseStaleLock();   // ← add this line
 
-  if (!mac) {
-    return res.status(400).json({
-      status: "error",
-      message: "MAC address is required",
-    });
-  }
-
-  /*
-   * Register this customer as waiting for a coin.
-   */
+      if (waitingClientMac && waitingClientMac !== mac) {
+        return res.status(409).json({
+          status: "busy",
+          message: "Another customer is currently paying. Please wait.",
+        });
+      }
 
       waitingClientMac = mac;
       waitingSince = Date.now();
+      paymentTotal = 0;
 
-      console.log(
-        `[PAYMENT] waiting client=${waitingClientMac}`
-      );
+      console.log(`[PAYMENT] waiting client=${waitingClientMac}`);
 
       return res.json({
         status: "waiting",
         mac,
+        payment_total: paymentTotal,
         message: "Waiting for coin",
       });
     }
@@ -235,113 +289,166 @@ case "start_payment": {
     |--------------------------------------------------------------------------
     */
 
-    case "coin": {
+case "coin": {
 
-      const peso = Number(req.query.peso);
+  releaseStaleLock();
+  esp8266LastSeen = Date.now();
 
-      if (!peso) {
-        return res.status(400).json({
-          status: "error",
-          message: "Coin value is required",
-        });
-      }
+  if (!waitingClientMac) {
+    console.log(`[COIN] peso=${req.query.peso} rejected - no waiting client`);
+    return res.status(400).json({
+      status: "error",
+      message: "No customer is waiting for payment",
+    });
+  }
 
-      /*
-      * We need a customer waiting for payment.
-      */
+  const peso = parseInt(req.query.peso, 10);
 
-      if (!waitingClientMac) {
+  if (![1, 5, 10].includes(peso)) {
+    return res.status(400).json({
+      status: "error",
+      message: "Invalid coin value",
+    });
+  }
 
-        console.log(
-          `[COIN] peso=${peso} rejected - no waiting client`
-        );
+  const RATE_TABLE = { 1: 720, 5: 7200, 10: 18000 };
+  const secondsAdded = RATE_TABLE[peso];
+  const mac = waitingClientMac;
 
-        return res.status(409).json({
-          status: "error",
-          message: "No customer is waiting for payment",
-        });
-      }
+  const session = getOrCreateSession(mac);
+  const currentRemaining = getRemainingSeconds(session);
+  const newRemaining = currentRemaining + secondsAdded;
 
-      /*
-      * Make sure the coin value is valid.
-      */
+  if (session.isPaused) {
+    session.pausedRemaining = newRemaining;
+  } else {
+    session.expiresAt = Date.now() + newRemaining * 1000;
+  }
 
-      const rate = getRate(peso);
+  session.totalPaid = (session.totalPaid || 0) + peso;
+  session.lastCoinAt = Date.now();
 
-      if (!rate) {
+  sessions.set(mac, session);
 
-        return res.status(400).json({
-          status: "error",
-          message: `Unsupported coin value: ${peso}`,
-        });
-      }
+  paymentTotal += peso;
+  totalSales += peso;
+  dailySales += peso;
 
-      /*
-      * Record ESP8266 activity.
-      */
+  console.log(
+    `[COIN] mac=${mac} peso=${peso} added=${secondsAdded}s remaining=${newRemaining}s paymentTotal=₱${paymentTotal}`
+  );
 
-      esp8266LastSeen = Date.now();
+  saveSessions();
 
-      /*
-      * The waiting customer receives the time.
-      */
+  return res.json({
+    status: "authorized",
+    mac,
+    peso,
+    seconds_added: secondsAdded,
+    seconds_remaining: newRemaining,
+    payment_total: paymentTotal,
+  });
+}
 
-      const mac = waitingClientMac;
 
-      const session = getOrCreateSession(mac);
+// ------- Paused ------------------------------------------
 
-      /*
-      * Preserve existing remaining time.
-      */
+case "pause": {
+  const mac = normalizeMac(req.query.mac);
+  const session = sessions.get(mac);
 
-      const currentRemaining =
-        getRemainingSeconds(session);
+  if (!session) {
+    return res.status(400).json({ status: "error", message: "No session found" });
+  }
 
-      /*
-      * Add purchased time.
-      */
+  if (!session.isPaused) {
+    session.pausedRemaining = getRemainingSeconds(session);
+    session.isPaused = true;
+    session.expiresAt = null; // stop the clock
+  }
 
-      const newRemaining =
-        currentRemaining + rate.seconds;
+  console.log(`[PAUSE] mac=${mac} remaining=${session.pausedRemaining}s`);
+  saveSessions();
+  return res.json({
+    status: "ok",
+    mac,
+    seconds_remaining: session.pausedRemaining,
+  });
+}
 
-      session.expiresAt =
-        Date.now() + newRemaining * 1000;
+case "resume": {
+  const mac = normalizeMac(req.query.mac);
+  const session = sessions.get(mac);
 
-      session.totalPaid += peso;
-      session.lastCoinAt = Date.now();
+  if (!session) {
+    return res.status(400).json({ status: "error", message: "No session found" });
+  }
 
-      sessions.set(mac, session);
+  if (session.isPaused) {
+    session.expiresAt = Date.now() + (session.pausedRemaining || 0) * 1000;
+    session.isPaused = false;
+  }
 
-      /*
-      * Sales statistics.
-      */
+  console.log(`[RESUME] mac=${mac} remaining=${getRemainingSeconds(session)}s`);
+  saveSessions();
+  return res.json({
+    status: "ok",
+    mac,
+    seconds_remaining: getRemainingSeconds(session),
+  });
+}
 
-      totalSales += peso;
-      dailySales += peso;
+// ----------------Insert Coin Timeout-----------------------------------
 
-      console.log(
-        `[COIN] mac=${mac} peso=${peso} ` +
-        `added=${rate.seconds}s ` +
-        `remaining=${newRemaining}s`
-      );
+  case "end_payment": {
+    const mac = normalizeMac(req.query.mac);
 
-      /*
-      * Payment completed.
-      *
-      * Clear waiting client so another customer
-      * can start a new payment.
-      */
-
+    if (waitingClientMac === mac) {
+      console.log(`[PAYMENT] ended for client=${waitingClientMac}`);
       waitingClientMac = null;
       waitingSince = null;
+    }
 
-      return res.status(200).json({
-        status: "authorized",
-        mac,
-        peso,
-        seconds_added: rate.seconds,
-        seconds_remaining: newRemaining,
-      });
+    return res.json({ status: "ok", mac });
+  }
+
+  //// -------------------KICK CLIENT-----------------------------------
+
+  case "kick": {
+  const mac = normalizeMac(req.query.mac);
+  const session = sessions.get(mac);
+
+  if (session) {
+    session.expiresAt = Date.now(); // zero out remaining time immediately
+    session.isPaused = false;
+    sessions.set(mac, session);
+    saveSessions();
+  }
+
+  console.log(`[KICK] mac=${mac} force-disconnected`);
+  return res.json({ status: "ok", mac });
+}
+
+// --------------------- Reset Stats----------------------
+    case "reset_stats": {
+      const which = req.query.which;
+
+      if (which === "total") {
+        totalSales = 0;
+      } else if (which === "daily") {
+        dailySales = 0;
+      } else {
+        return res.status(400).json({ status: "error", message: "Invalid 'which' parameter" });
+      }
+
+      console.log(`[RESET] ${which} sales reset to 0`);
+      return res.json({ status: "ok", which });
+    }
+
+  //-----------------NODEMCU HEARTBEAT-----------------------------
+      case "heartbeat": {
+      esp8266LastSeen = Date.now();
+      return res.json({ status: "ok" });
     }
 
     /*
@@ -357,8 +464,10 @@ case "start_payment": {
       });
     }
   }
-});
+};
 
+app.get("/cgi-bin/pisowifi", handlePisowifi);
+app.post("/cgi-bin/pisowifi", handlePisowifi);
 /*
 |--------------------------------------------------------------------------
 | ADMIN DASHBOARD

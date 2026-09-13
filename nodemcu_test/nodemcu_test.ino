@@ -17,7 +17,7 @@ const char* WIFI_PASSWORD = "pldthome";
 |--------------------------------------------------------------------------
 */
 
-const char* SERVER_IP = "192.168.1.208";
+const char* SERVER_IP = "192.168.1.219";
 const int SERVER_PORT = 3000;
 
 /*
@@ -26,9 +26,7 @@ const int SERVER_PORT = 3000;
 |--------------------------------------------------------------------------
 |
 | D2 = GPIO4
-|
-| For now:
-| D2 -> GND = simulated coin
+| ALLAN 1239A pulse output -> D2
 |
 */
 
@@ -36,15 +34,48 @@ const int COIN_PIN = 4;
 
 /*
 |--------------------------------------------------------------------------
-| Coin Detection
+| Coin Pulse Counting
 |--------------------------------------------------------------------------
+|
+| The ALLAN 1239A sends a BURST of pulses per coin, not one pulse
+| per coin. Number of pulses = coin value (DIP-switch configurable
+| on the selector, commonly 1 = ₱1, 5 = ₱5, 10 = ₱10).
+|
+| Strategy:
+|   - Count pulses while they keep arriving.
+|   - After PULSE_TIMEOUT_MS of silence, treat the burst as "done"
+|     and map the pulse count to a peso value.
+|
 */
 
-volatile bool coinDetected = false;
+volatile unsigned long pulseCount = 0;
+volatile unsigned long lastPulseTime = 0;
 
-unsigned long lastCoinTime = 0;
+const unsigned long DEBOUNCE_MS = 40;       // ignore pulses closer than this (contact bounce)
+const unsigned long PULSE_TIMEOUT_MS = 350; // silence after last pulse = coin burst finished
 
-const unsigned long DEBOUNCE_MS = 100;
+bool countingActive = false;
+unsigned long lastHeartbeat = 0;
+const unsigned long HEARTBEAT_INTERVAL_MS = 15000; // every 15s
+
+/*
+|--------------------------------------------------------------------------
+| NODEMCU
+|--------------------------------------------------------------------------
+*/
+void sendHeartbeat() {
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  WiFiClient client;
+  HTTPClient http;
+
+  String url = "http://" + String(SERVER_IP) + ":" + String(SERVER_PORT) +
+               "/cgi-bin/pisowifi?action=heartbeat";
+
+  http.begin(client, url);
+  http.GET();
+  http.end();
+}
 
 /*
 |--------------------------------------------------------------------------
@@ -56,11 +87,9 @@ void IRAM_ATTR coinInterrupt() {
 
   unsigned long now = millis();
 
-  if (now - lastCoinTime >= DEBOUNCE_MS) {
-
-    coinDetected = true;
-
-    lastCoinTime = now;
+  if (now - lastPulseTime >= DEBOUNCE_MS) {
+    pulseCount++;
+    lastPulseTime = now;
   }
 }
 
@@ -78,18 +107,37 @@ void connectWiFi() {
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
   while (WiFi.status() != WL_CONNECTED) {
-
     delay(500);
-
     Serial.print(".");
   }
 
   Serial.println();
-
   Serial.println("WiFi connected!");
-
   Serial.print("NodeMCU IP: ");
   Serial.println(WiFi.localIP());
+}
+
+/*
+|--------------------------------------------------------------------------
+| Map pulse count -> peso value
+|--------------------------------------------------------------------------
+|
+| Adjust this table to match your ALLAN 1239A DIP switch settings.
+| Check the selector's manual / test it with a multimeter+serial log
+| first to confirm actual pulse counts per coin.
+|
+*/
+
+int pulsesToPeso(unsigned long pulses) {
+
+  if (pulses == 1)  return 1;
+  if (pulses == 5)  return 5;
+  if (pulses == 10) return 10;
+
+  Serial.print("Unrecognized pulse count: ");
+  Serial.println(pulses);
+
+  return 0; // unknown burst — ignore it, don't credit anything
 }
 
 /*
@@ -100,15 +148,17 @@ void connectWiFi() {
 
 void sendCoin(int pesoValue) {
 
+  if (pesoValue <= 0) {
+    Serial.println("Skipping send — invalid peso value.");
+    return;
+  }
+
   if (WiFi.status() != WL_CONNECTED) {
-
     Serial.println("WiFi disconnected.");
-
     return;
   }
 
   WiFiClient client;
-
   HTTPClient http;
 
   String url =
@@ -121,7 +171,6 @@ void sendCoin(int pesoValue) {
 
   Serial.println();
   Serial.println("Sending coin to backend...");
-
   Serial.println(url);
 
   http.begin(client, url);
@@ -129,23 +178,16 @@ void sendCoin(int pesoValue) {
   int httpCode = http.GET();
 
   if (httpCode > 0) {
-
     Serial.print("HTTP Code: ");
     Serial.println(httpCode);
 
     String response = http.getString();
-
     Serial.println("Backend response:");
-
     Serial.println(response);
 
   } else {
-
     Serial.print("HTTP request failed: ");
-
-    Serial.println(
-      http.errorToString(httpCode)
-    );
+    Serial.println(http.errorToString(httpCode));
   }
 
   http.end();
@@ -160,23 +202,12 @@ void sendCoin(int pesoValue) {
 void setup() {
 
   Serial.begin(115200);
-
   delay(500);
 
   Serial.println();
   Serial.println("==============================");
   Serial.println("       RichFi Coin Reader");
   Serial.println("==============================");
-
-  /*
-   * D2 uses internal pull-up.
-   *
-   * Normal state:
-   * HIGH
-   *
-   * Connected to GND:
-   * LOW
-   */
 
   pinMode(COIN_PIN, INPUT_PULLUP);
 
@@ -197,36 +228,48 @@ void setup() {
 
 void loop() {
 
-  /*
-   * Check whether the interrupt detected a coin.
-   */
-
-  if (coinDetected) {
-
-    /*
-     * Safely clear the flag.
-     */
-
-    noInterrupts();
-
-    coinDetected = false;
-
-    interrupts();
-
-    /*
-     * Temporary testing:
-     *
-     * Every detected pulse = ₱1
-     */
-
-    Serial.println();
-    Serial.println("==============================");
-    Serial.println("       COIN DETECTED!");
-    Serial.println("       TEST VALUE: P1");
-    Serial.println("==============================");
-
-    sendCoin(1);
+  if (millis() - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
+    sendHeartbeat();
+    lastHeartbeat = millis();
   }
 
-  delay(20);
+  if (pulseCount > 0) {
+    countingActive = true;
+  }
+
+  if (countingActive) {
+
+    unsigned long timeSinceLastPulse = millis() - lastPulseTime;
+
+    if (timeSinceLastPulse >= PULSE_TIMEOUT_MS) {
+
+      // Burst finished — snapshot and clear atomically
+      noInterrupts();
+      unsigned long finalCount = pulseCount;
+      pulseCount = 0;
+      interrupts();
+
+      countingActive = false;
+
+      Serial.println();
+      Serial.println("==============================");
+      Serial.print("  COIN BURST DETECTED: ");
+      Serial.print(finalCount);
+      Serial.println(" pulses");
+
+      int peso = pulsesToPeso(finalCount);
+
+      if (peso > 0) {
+        Serial.print("  VALUE: P");
+        Serial.println(peso);
+        Serial.println("==============================");
+        sendCoin(peso);
+      } else {
+        Serial.println("  VALUE: unrecognized, ignored");
+        Serial.println("==============================");
+      }
+    }
+  }
+
+  delay(10);
 }

@@ -188,25 +188,25 @@
       <button class="hamburger" onclick="openSidebar()">&#9776;</button>
       <h2>Dashboard</h2>
     </div>
-    <div class="cards">
+      <div class="cards">
       <div class="stat-card">
         <div class="label">Total Sales</div>
-        <div class="value">&#8369; 4,540</div>
+        <div class="value" id="totalSalesVal">&#8369; 0</div>
         <button class="reset" onclick="resetStat('total')">Reset</button>
       </div>
       <div class="stat-card">
         <div class="label">Daily Sales</div>
-        <div class="value">&#8369; 150</div>
+        <div class="value" id="dailySalesVal">&#8369; 0</div>
         <button class="reset" onclick="resetStat('daily')">Reset</button>
       </div>
       <div class="stat-card">
         <div class="label">Active Users</div>
-        <div class="value">5</div>
+        <div class="value" id="activeUsersVal">0</div>
         <button class="view" onclick="go('network')">View</button>
       </div>
       <div class="stat-card">
         <div class="label">ESP8266 Status</div>
-        <div class="value status-online">Online</div>
+        <div class="value status-online" id="espStatusVal">Checking...</div>
       </div>
     </div>
     <div class="footer-note">Powered by <b>RichFi</b><br>All Rights Reserved</div>
@@ -314,14 +314,141 @@
     { name: "10 pesos/ 5 hours", price: 10, minutes: 300, expiration: 600 }
   ];
 
+  let dashboardData = { devices: [] };
+
+  async function loadDashboard() {
+    try {
+      const res = await fetch("/cgi-bin/dashboard");
+      const data = await res.json();
+      dashboardData = data;
+
+      document.getElementById("totalSalesVal").textContent = "₱ " + data.total_sales;
+      document.getElementById("dailySalesVal").textContent = "₱ " + data.daily_sales;
+      document.getElementById("activeUsersVal").textContent = data.active_users;
+
+      const espEl = document.getElementById("espStatusVal");
+      espEl.textContent = data.esp8266_status === "online" ? "Online" : "Offline";
+      espEl.className = "value " + (data.esp8266_status === "online" ? "status-online" : "");
+      if (data.esp8266_status !== "online") espEl.style.color = "var(--red)";
+
+    } catch (err) {
+      console.error("Dashboard load failed:", err);
+    }
+  }
+
+
   function go(viewName) {
     document.querySelectorAll(".view").forEach(v => v.classList.remove("active"));
     document.getElementById("view-" + viewName).classList.add("active");
     closeSidebar();
+
+    if (viewName === "dashboard") {
+      loadDashboard();
+    }
+    if (viewName === "network") {
+      loadDevices();
+    }
     if (viewName === "rates" && document.getElementById("ratesContainer").children.length === 0) {
-      initialRates.forEach(r => addRateBlock(r));
+      loadRates();
     }
   }
+
+//---------------- Network & Devices -------------------------
+
+  function loadDevices() {
+    const tbody = document.querySelector("#deviceTable tbody");
+    tbody.innerHTML = "";
+
+    if (dashboardData.devices.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:var(--muted);">No active devices</td></tr>';
+      return;
+    }
+
+    dashboardData.devices.forEach(d => {
+      const tr = document.createElement("tr");
+      const h = Math.floor(d.seconds_remaining / 3600);
+      const m = Math.floor((d.seconds_remaining % 3600) / 60);
+
+      tr.innerHTML = `
+        <td>${d.mac}</td>
+        <td>${h}h ${m}m left</td>
+        <td class="status-online-text">Online</td>
+        <td class="action-x" onclick="removeDevice('${d.mac}')">&#10005;</td>
+      `;
+      tbody.appendChild(tr);
+    });
+  }
+
+  // ------------KICK CLIENT-------------------------
+ async function removeDevice(mac) {
+  if (!confirm("Remove this device from the network?")) return;
+
+  try {
+    const res = await fetch("/cgi-bin/pisowifi?action=kick&mac=" + encodeURIComponent(mac));
+    const data = await res.json();
+
+    if (data.status === "ok") {
+      loadDevices();
+      loadDashboard();
+    } else {
+      alert("Failed to kick device: " + (data.message || "unknown error"));
+    }
+  } catch (err) {
+    console.error("Kick failed:", err);
+    alert("Kick request failed — check console.");
+  }
+}
+
+  //---------------- WiFi Rates -------------------------
+
+  async function loadRates() {
+    try {
+      const res = await fetch("/cgi-bin/pisowifi?action=rates");
+      const data = await res.json();
+      if (data.status === "ok") {
+        data.rates.forEach(r => addRateBlock({
+          name: r.label,
+          price: r.peso,
+          minutes: Math.floor(r.seconds / 60),
+          expiration: ""
+        }));
+      }
+    } catch (err) {
+      console.error("Rates load failed:", err);
+    }
+  }
+
+  //--------------SAVE RATES------------------------
+    async function saveRates() {
+      const blocks = document.querySelectorAll("#ratesContainer .section-block");
+      const rates = Array.from(blocks).map(b => {
+        const inputs = b.querySelectorAll("input");
+        return {
+          name: inputs[0].value,
+          price: inputs[1].value,
+          minutes: inputs[2].value,
+          expiration: inputs[3].value
+        };
+      });
+
+      try {
+        const res = await fetch("/cgi-bin/pisowifi?action=update_rates", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(rates)
+        });
+        const data = await res.json();
+
+        if (data.status === "ok") {
+          alert("Rates saved successfully.");
+        } else {
+          alert("Failed to save rates: " + data.message);
+        }
+      } catch (err) {
+        console.error("Save rates failed:", err);
+        alert("Failed to save rates — check console.");
+      }
+    }
 
   function togglePass() {
     const p = document.getElementById("loginPass");
@@ -356,12 +483,19 @@
     document.getElementById("sidebarOverlay").classList.remove("show");
   }
 
-  function resetStat(which) {
-    // TODO: call router/backend to reset sales counters
-    if (confirm("Reset " + which + " sales to zero?")) {
-      alert("(demo) " + which + " sales reset.");
-    }
+// -----------------------Reset Stat---------------------
+
+  async function resetStat(which) {
+  if (!confirm("Reset " + which + " sales to zero?")) return;
+
+  try {
+    await fetch("/cgi-bin/pisowifi?action=reset_stats&which=" + which);
+    loadDashboard();
+  } catch (err) {
+    console.error("Reset failed:", err);
+    alert("Failed to reset — check console.");
   }
+}
 
   function removeDevice(el) {
     // TODO: call router to kick/deauthorize this MAC

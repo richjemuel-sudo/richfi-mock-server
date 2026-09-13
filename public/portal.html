@@ -106,7 +106,7 @@
     text-align: center;
     margin-bottom: 14px;
   }
-
+ 
   .info-box .label {
 
     font-size: 12px;
@@ -135,22 +135,25 @@
     margin-top: 10px;
   }
 
-  .info-box .amount-row .amt {
-
-    font-size: 22px;
-    font-weight: 700;
+ .info-box .amt {
+    font-size: 50px;
+    font-weight: 600;
+    color: var(--green-dark);
   }
-
+.pay-countdown-text {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--dark);
+}
   .spinner {
-
     display: inline-block;
-    width: 16px; height: 16px;
-    border: 2px solid #f59e0b;
+    width: 20px; height: 20px;
+    border: 3px solid #f59e0b;
     border-top-color: transparent;
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
     vertical-align: middle;
-    margin-right: 6px;
+    margin-right: 8px;
   }
 
   @keyframes spin { to { transform: rotate(360deg); } }
@@ -220,26 +223,16 @@
         <div class="label">&#128337; Time Remaining</div>
         <div class="big" id="timeRemaining">0hr : 0 m : 0 s</div>
       </div>
-
       <!-- STATE: PAYING - insert coin countdown -->
       <div id="payingBox" class="info-box" style="display:none;">
-
         <div class="label" style="color:#d97b1f;">PLEASE INSERT COIN</div>
-
-        <div style="font-size:14px; color: var(--dark); margin-top:8px;">
-
+        <div class="pay-countdown-text" style="margin-top:8px;">
           <span class="spinner"></span><span id="payCountdown">30</span> sec
-
         </div>
-
-          <div class="amount-row">
-
-            &#128176; Insert your coin
-
+        <div class="amount-row">
+          &#128176; Insert your coin
         </div>
-
         <div class="amt" id="totalAmount">Waiting...</div>
-
       </div>
 
       <!-- BUTTONS -->
@@ -289,8 +282,10 @@
   let secondsRemaining = 0;
   let payCountdown = 30;
   let totalAmount = 0;
+  
   let payingTimer = null;
   let sessionTimer = null;
+  let isPaused = false; // add near other state vars
   // Backend time before the current payment session
   let paymentStartSeconds = 0;
 
@@ -314,17 +309,16 @@
       mainActionBtn.className = "btn btn-green";
       pauseBtn.style.display = "none";
 
-    } else if (state === "connected") {
-
-      statusVal.textContent = "Connected";
-      statusVal.className = "val connected";
+    } 
+     else if (state === "connected") {
+      statusVal.textContent = isPaused ? "Disconnected" : "Connected";
+      statusVal.className = isPaused ? "val disconnected" : "val connected";
       timeBox.style.display = "block";
       payingBox.style.display = "none";
       mainActionBtn.textContent = "INSERT COIN";
       mainActionBtn.className = "btn btn-green";
       pauseBtn.style.display = "block";
       updateTimeDisplay();
-
     } else if (state === "paying") {
 
       statusVal.textContent = "Connected";
@@ -389,6 +383,22 @@
       return;
     }
 
+    // Backend successfully registered this customer
+    // as the one waiting for payment.
+    state = "paying";
+    totalAmount = 0;
+    payCountdown = 30;
+
+    render();
+
+    console.log(
+      "Waiting for coin for client:",
+      data.mac
+    );
+
+    // Start/restart the 30-second payment countdown
+    startPaymentCountdown();
+
     /*
      * Get the CURRENT backend time.
      * This becomes our baseline.
@@ -433,87 +443,93 @@
   }
 }
 
-  async function handleMainAction() {
-
-  // INSERT COIN
+async function handleMainAction() {
   if (state === "disconnected" || state === "connected") {
     await startPayment();
     return;
   }
 
-  // DONE PAYING
   if (state === "paying") {
-
     console.log("Done Paying clicked.");
-
     clearInterval(payingTimer);
 
-    state = secondsRemaining > 0
-      ? "connected"
-      : "disconnected";
+    state = secondsRemaining > 0 ? "connected" : "disconnected";
 
     if (state === "connected") {
       startSessionCountdown();
     }
 
     render();
+
+    // Tell backend this payment window is closed
+    fetch("/cgi-bin/pisowifi?action=end_payment&mac=" + encodeURIComponent(mac))
+      .catch(err => console.error("End payment request failed:", err));
   }
 }
 
-  function startPaymentCountdown() {
+    function startPaymentCountdown() {
+    clearInterval(payingTimer);
 
-  clearInterval(payingTimer);
+    payCountdown = 30;
+    payCountdownEl.textContent = payCountdown;
 
-  payingTimer = setInterval(() => {
+    payingTimer = setInterval(() => {
 
-    payCountdown--;
+      payCountdown--;
+
+      payCountdownEl.textContent = payCountdown;
 
     if (payCountdown <= 0) {
-
       clearInterval(payingTimer);
+      console.log("Payment timeout.");
 
-      console.log("Payment countdown expired.");
-
-      state = secondsRemaining > 0
-        ? "connected"
-        : "disconnected";
-
-      if (state === "connected") {
+      if (totalAmount > 0) {
+        state = "connected";
         startSessionCountdown();
+      } else {
+        state = secondsRemaining > 0 ? "connected" : "disconnected";
       }
 
       render();
 
-    } else {
-
-      render();
-
+      // Payment window closed — clear waiting state on backend
+      fetch("/cgi-bin/pisowifi?action=end_payment&mac=" + encodeURIComponent(mac))
+        .catch(err => console.error("End payment request failed:", err));
     }
 
-  }, 1000);
-}
+    }, 1000);
+  }
 
   function pauseTime() {
-    // TODO: call router/NodeMCU to pause session accounting
-    clearInterval(sessionTimer);
-    pauseBtn.textContent = "Resume Time";
-    pauseBtn.onclick = resumeTime;
-  }
+  isPaused = true;
+  clearInterval(sessionTimer);
+  pauseBtn.textContent = "Resume Time";
+  pauseBtn.onclick = resumeTime;
+  render();
 
-  function resumeTime() {
-    startSessionCountdown();
-    pauseBtn.textContent = "Pause Time";
-    pauseBtn.onclick = pauseTime;
-  }
+  fetch("/cgi-bin/pisowifi?action=pause&mac=" + encodeURIComponent(mac))
+    .catch(err => console.error("Pause request failed:", err));
+}
+
+function resumeTime() {
+  isPaused = false;
+  startSessionCountdown();
+  pauseBtn.textContent = "Pause Time";
+  pauseBtn.onclick = pauseTime;
+  render();
+
+  fetch("/cgi-bin/pisowifi?action=resume&mac=" + encodeURIComponent(mac))
+    .catch(err => console.error("Resume request failed:", err));
+}
 
   function showRates() {
-    const list = document.getElementById("ratesList");
-    list.innerHTML = RATE_TABLE.map(t =>
-
-      '<div style="border:1px solid var(--border); border-radius:8px; padding:12px; text-align:center; margin-bottom:10px; color:var(--dark); font-weight:600; font-size:14px;">' + t.label + '</div>'
-
-    ).join("");
-    document.getElementById("ratesOverlay").style.display = "flex";
+    loadRates().then(() => {
+      const list = document.getElementById("ratesList");
+      list.innerHTML = RATE_TABLE.map(t =>
+        '<div style="border:1px solid var(--border); border-radius:8px; padding:12px; text-align:center; margin-bottom:10px; color:var(--dark); font-weight:600; font-size:14px;">' + t.label + '</div>'
+      ).join("");
+      document.getElementById("ratesOverlay").style.display = "flex";
+    });
   }
 
   function hideRates() {
@@ -524,38 +540,28 @@
 
 // ----- New load Rates not hardcoded ---- 
 
-    async function loadRates() {
-    try {
-      const response = await fetch(
-        "/cgi-bin/pisowifi?action=rates"
-      );
-
-      const data = await response.json();
-
-      console.log("Rates:", data);
-
-      if (data.status === "ok") {
-        RATE_TABLE = data.rates;
-      }
-    } catch (error) {
-      console.error(
-        "Failed to load rates:",
-        error
-      );
+async function loadRates() {
+  try {
+    const response = await fetch("/cgi-bin/pisowifi?action=rates");
+    const data = await response.json();
+    if (data.status === "ok") {
+      RATE_TABLE = data.rates;
     }
+  } catch (error) {
+    console.error("Failed to load rates:", error);
   }
+}
 
   // ---- REAL POLLING (once wired to opennds/router) ----
 
-async function checkStatus() {
 
+async function checkStatus() {
   if (!mac) {
     console.warn("No client MAC found.");
     return;
   }
 
   try {
-
     const response = await fetch(
       "/cgi-bin/pisowifi?action=status&mac=" +
       encodeURIComponent(mac)
@@ -563,169 +569,68 @@ async function checkStatus() {
 
     const data = await response.json();
 
-    const backendSeconds =
-      Number(data.seconds_remaining) || 0;
+    console.log("Status:", data);
 
-    console.log(
-      "Status:",
-      data,
-      "Payment baseline:",
-      paymentStartSeconds
-    );
+    // ==========================================
+    // CUSTOMER HAS ACTIVE WIFI TIME
+    // ==========================================
+    if (data.status === "authorized" && data.seconds_remaining > 0) {
 
-    /*
-     * ==========================================
-     * PAYMENT MODE
-     * ==========================================
-     */
-
-    if (state === "paying") {
-
-      /*
-       * IMPORTANT:
-       *
-       * Do NOT change state to connected just
-       * because the backend says "authorized".
-       *
-       * The customer may already have existing time.
-       *
-       * We only care if the time INCREASED.
-       */
-
-      if (backendSeconds > paymentStartSeconds) {
-
-        const secondsAdded =
-          backendSeconds - paymentStartSeconds;
-
-        console.log(
-          "================================"
-        );
-
-        console.log(
-          "COIN DETECTED!"
-        );
-
-        console.log(
-          "Seconds added:",
-          secondsAdded
-        );
-
-        /*
-         * Update backend time immediately
-         */
-        secondsRemaining = backendSeconds;
-
-        /*
-         * Determine denomination
-         */
-        let detectedPeso = 0;
-
-        if (secondsAdded === 720) {
-          detectedPeso = 1;
-        }
-        else if (secondsAdded === 7200) {
-          detectedPeso = 5;
-        }
-        else if (secondsAdded === 18000) {
-          detectedPeso = 10;
+        // Sync pause state from backend — source of truth, survives refresh
+        if (data.is_paused !== isPaused) {
+          isPaused = data.is_paused;
+          if (isPaused) {
+            clearInterval(sessionTimer);
+            pauseBtn.textContent = "Resume Time";
+            pauseBtn.onclick = resumeTime;
+          } else {
+            pauseBtn.textContent = "Pause Time";
+            pauseBtn.onclick = pauseTime;
+          }
         }
 
-        if (detectedPeso > 0) {
-
-          totalAmount += detectedPeso;
-
-          console.log(
-            "Coin value: ₱" + detectedPeso
-          );
-
-        } else {
-
-          console.warn(
-            "Unknown coin value.",
-            "Seconds added:",
-            secondsAdded
-          );
-
+        if (!isPaused) {
+          secondsRemaining = data.seconds_remaining;
         }
 
-        /*
-         * IMPORTANT:
-         *
-         * Reset the 30-second countdown
-         * after EVERY detected coin.
-         */
-        payCountdown = 30;
+        if (typeof data.payment_total === "number") {
+          totalAmount = data.payment_total;
+        }
 
-        /*
-         * New backend time becomes the baseline
-         * for the NEXT coin.
-         */
-        paymentStartSeconds = backendSeconds;
-
-        /*
-         * Update screen immediately
-         */
-        render();
-
-        console.log(
-          "Payment countdown reset to 30 seconds."
-        );
-
-        console.log(
-          "New payment baseline:",
-          paymentStartSeconds
-        );
-
-        console.log(
-          "================================"
-        );
-      }
-
-    }
-
-    /*
-     * ==========================================
-     * NORMAL CONNECTED MODE
-     * ==========================================
-     */
-
-    else {
-
-      if (
-        data.status === "authorized" &&
-        backendSeconds > 0
-      ) {
-
-        secondsRemaining = backendSeconds;
-
-        if (state !== "connected") {
-
-          state = "connected";
-
-          startSessionCountdown();
-
+        if (state === "paying") {
+          const newTotal = typeof data.payment_total === "number" ? data.payment_total : totalAmount;
+          if (newTotal > totalAmount) {
+            totalAmount = newTotal;
+            payCountdown = 30;
+          }
           render();
-        }
+        }  else {
+            state = "connected";
+            if (!isPaused) {
+              secondsRemaining = data.seconds_remaining;
+              startSessionCountdown();
+            } else {
+              secondsRemaining = data.seconds_remaining; // server returns pausedRemaining when paused anyway
+            }
+            render();
+          }
+      } else {
+      // ==========================================
+      // NO ACTIVE WIFI TIME
+      // ==========================================
+      secondsRemaining = 0;
 
-      }
-      else {
-
-        secondsRemaining = 0;
+      if (state !== "paying") {
+        state = "disconnected";
 
         clearInterval(sessionTimer);
-
-        state = "disconnected";
 
         render();
       }
     }
 
   } catch (error) {
-
-    console.error(
-      "Status request failed:",
-      error
-    );
+    console.error("Status request failed:", error);
   }
 
   setTimeout(checkStatus, POLL_MS);
