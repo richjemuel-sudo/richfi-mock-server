@@ -321,8 +321,13 @@
       updateTimeDisplay();
     } else if (state === "paying") {
 
-      statusVal.textContent = "Connected";
-      statusVal.className = "val connected";
+      // Only show "Connected" if the client is actually authorized
+      // (existing time remaining, or a coin was just inserted this session).
+      // A brand-new user who just clicked INSERT COIN has 0 seconds
+      // remaining and must stay "Disconnected" until they actually pay.
+      const isAuthorized = secondsRemaining > 0;
+      statusVal.textContent = isAuthorized ? "Connected" : "Disconnected";
+      statusVal.className = isAuthorized ? "val connected" : "val disconnected";
       timeBox.style.display = "none";
       payingBox.style.display = "block";
       mainActionBtn.textContent = "Done Paying";

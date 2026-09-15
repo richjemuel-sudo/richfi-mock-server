@@ -32,8 +32,13 @@ let RATES = [
 
 const sessions = new Map();
 
+// Simple sales counters
 let totalSales = 0;
 let dailySales = 0;
+let monthlySales = 0;
+
+// Unique clients that have successfully purchased WiFi service
+const servedClients = new Set();
 
 let esp8266LastSeen = Date.now();
 
@@ -55,6 +60,11 @@ let paymentTotal = 0;
 
 const PAYMENT_LOCK_TIMEOUT_MS = 45000; // slightly longer than the 30s frontend countdown
 
+// ------------------------- DATA LIMIT -------------------------------------
+let DATA_LIMIT = { upload: "5Mbps", download: "5Mbps" }; // default
+
+// ------------------------- ADMIN CREDENTIALS -------------------------------
+let ADMIN_CREDENTIALS = { username: "admin", password: "admin" }; // default, changeable via admin panel
 /*
 |--------------------------------------------------------------------------
 | Helper Functions
@@ -62,29 +72,69 @@ const PAYMENT_LOCK_TIMEOUT_MS = 45000; // slightly longer than the 30s frontend 
 */
 
 const fs = require("fs");
-const SESSIONS_FILE = "./sessions.json";
+const STATE_FILE = "./state.json";
 
-function saveSessions() {
-  const obj = Object.fromEntries(sessions);
-  fs.writeFileSync(SESSIONS_FILE, JSON.stringify(obj));
-}
+  function saveState() {
+    const state = {
+      sessions: Object.fromEntries(sessions),
+      totalSales,
+      dailySales,
+      monthlySales,
+      servedClients: Array.from(servedClients),
+      rates: RATES,
+      dataLimit: DATA_LIMIT,
+      adminCredentials: ADMIN_CREDENTIALS,
+    };
+    fs.writeFileSync(STATE_FILE, JSON.stringify(state));
+  }
 
 
-// ------ Wifi rates----------
-function getRate(peso) {
-  return RATES.find((rate) => rate.peso === Number(peso));
-}
+  // ------ Wifi rates----------
+  function getRate(peso) {
+    return RATES.find((rate) => rate.peso === Number(peso));
+  }
 
-function loadSessions() {
-  if (fs.existsSync(SESSIONS_FILE)) {
-    const obj = JSON.parse(fs.readFileSync(SESSIONS_FILE, "utf8"));
-    for (const [mac, session] of Object.entries(obj)) {
-      sessions.set(mac, session);
+  function loadState() {
+    if (fs.existsSync(STATE_FILE)) {
+      try {
+        const state = JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
+
+        if (state.sessions) {
+          for (const [mac, session] of Object.entries(state.sessions)) {
+            sessions.set(mac, session);
+          }
+        }
+        if (typeof state.totalSales === "number") totalSales = state.totalSales;
+        if (typeof state.dailySales === "number") dailySales = state.dailySales;
+        if (typeof state.monthlySales === "number") monthlySales = state.monthlySales;
+        if (Array.isArray(state.servedClients)) {
+          for (const clientMac of state.servedClients) {
+            servedClients.add(clientMac);
+          }
+        }
+        if (Array.isArray(state.rates)) RATES = state.rates;
+        if (state.adminCredentials && state.adminCredentials.username && state.adminCredentials.password) {
+          ADMIN_CREDENTIALS = state.adminCredentials;
+        }
+        if (state.dataLimit) {
+          // Backward-compatible with older state.json files that stored
+          // dataLimit as a single "5Mbps / 5Mbps" string.
+          if (typeof state.dataLimit === "string") {
+            const parts = state.dataLimit.split("/").map(s => s.trim());
+            DATA_LIMIT = { upload: parts[0] || "5Mbps", download: parts[1] || "5Mbps" };
+          } else {
+            DATA_LIMIT = state.dataLimit;
+          }
+        }
+
+        console.log("[STATE] loaded from disk");
+      } catch (err) {
+        console.error("[STATE] failed to load:", err);
+      }
     }
   }
-}
 
-loadSessions(); // call once at startup, before app.listen
+  loadState(); // call once at startup, before app.listen
 
 function releaseStaleLock() {
   if (waitingClientMac && Date.now() - waitingSince > PAYMENT_LOCK_TIMEOUT_MS) {
@@ -100,12 +150,6 @@ function normalizeMac(mac) {
   return mac
     .trim()
     .toUpperCase();
-}
-
-function getRate(peso) {
-  return CONFIG.rates.find(
-    (rate) => rate.peso === Number(peso)
-  );
 }
 
 function getRemainingSeconds(session) {
@@ -212,11 +256,8 @@ function handlePisowifi(req, res) {
 
     //------------------------- SAVE RATES -------------------------------------
     case "update_rates": {
-    let body = "";
-    req.on("data", chunk => { body += chunk; });
-    req.on("end", () => {
       try {
-        const parsed = JSON.parse(body);
+        const parsed = req.body; // already parsed by express.json() middleware
 
         if (!Array.isArray(parsed) || parsed.length === 0) {
           return res.status(400).json({ status: "error", message: "Rates array required" });
@@ -237,15 +278,13 @@ function handlePisowifi(req, res) {
 
         RATES = newRates;
         console.log(`[RATES] updated: ${JSON.stringify(RATES)}`);
-
+        saveState(); 
         return res.json({ status: "ok", rates: RATES });
 
       } catch (err) {
         return res.status(400).json({ status: "error", message: "Invalid JSON body" });
       }
-    });
-    return; // important: don't fall through to default, since response is async
-  }
+    }
 /*
 |--------------------------------------------------------------------------
 | START PAYMENT
@@ -303,16 +342,16 @@ case "coin": {
   }
 
   const peso = parseInt(req.query.peso, 10);
+  const rate = getRate(peso);
 
-  if (![1, 5, 10].includes(peso)) {
+  if (!rate) {
     return res.status(400).json({
       status: "error",
       message: "Invalid coin value",
     });
   }
 
-  const RATE_TABLE = { 1: 720, 5: 7200, 10: 18000 };
-  const secondsAdded = RATE_TABLE[peso];
+  const secondsAdded = rate.seconds;
   const mac = waitingClientMac;
 
   const session = getOrCreateSession(mac);
@@ -333,12 +372,14 @@ case "coin": {
   paymentTotal += peso;
   totalSales += peso;
   dailySales += peso;
+  monthlySales += peso;
+  servedClients.add(mac);
 
   console.log(
     `[COIN] mac=${mac} peso=${peso} added=${secondsAdded}s remaining=${newRemaining}s paymentTotal=₱${paymentTotal}`
   );
 
-  saveSessions();
+  saveState();
 
   return res.json({
     status: "authorized",
@@ -368,7 +409,7 @@ case "pause": {
   }
 
   console.log(`[PAUSE] mac=${mac} remaining=${session.pausedRemaining}s`);
-  saveSessions();
+  saveState();
   return res.json({
     status: "ok",
     mac,
@@ -390,7 +431,7 @@ case "resume": {
   }
 
   console.log(`[RESUME] mac=${mac} remaining=${getRemainingSeconds(session)}s`);
-  saveSessions();
+  saveState();
   return res.json({
     status: "ok",
     mac,
@@ -422,7 +463,7 @@ case "resume": {
     session.expiresAt = Date.now(); // zero out remaining time immediately
     session.isPaused = false;
     sessions.set(mac, session);
-    saveSessions();
+    saveState();
   }
 
   console.log(`[KICK] mac=${mac} force-disconnected`);
@@ -437,11 +478,14 @@ case "resume": {
         totalSales = 0;
       } else if (which === "daily") {
         dailySales = 0;
+      } else if (which === "monthly") {
+        monthlySales = 0;
       } else {
         return res.status(400).json({ status: "error", message: "Invalid 'which' parameter" });
       }
 
       console.log(`[RESET] ${which} sales reset to 0`);
+      saveState();
       return res.json({ status: "ok", which });
     }
 
@@ -450,6 +494,70 @@ case "resume": {
       esp8266LastSeen = Date.now();
       return res.json({ status: "ok" });
     }
+
+  //----------------- DATA LIMIT ------------------------------------
+      case "get_data_limit": {
+        return res.json({ status: "ok", data_limit: DATA_LIMIT });
+      }
+
+      case "set_data_limit": {
+        const upload = req.query.upload;
+        const download = req.query.download;
+
+        if (!upload || !download) {
+          return res.status(400).json({ status: "error", message: "upload and download are required" });
+        }
+
+        DATA_LIMIT = { upload, download };
+        console.log(`[DATA LIMIT] updated to: ${JSON.stringify(DATA_LIMIT)}`);
+        saveState();
+
+        return res.json({ status: "ok", data_limit: DATA_LIMIT });
+      }
+
+  //----------------- ADMIN AUTH ------------------------------------
+      case "login": {
+        const body = req.body || {};
+        const username = (body.username || "").trim();
+        const password = body.password || "";
+
+        if (!username || !password) {
+          return res.status(400).json({ status: "error", message: "Username and password are required" });
+        }
+
+        if (username === ADMIN_CREDENTIALS.username && password === ADMIN_CREDENTIALS.password) {
+          console.log(`[ADMIN] login ok user=${username}`);
+          return res.json({ status: "ok", username });
+        }
+
+        console.log(`[ADMIN] login failed user=${username}`);
+        return res.status(401).json({ status: "error", message: "Invalid username or password" });
+      }
+
+      case "change_password": {
+        const body = req.body || {};
+        const username = (body.username || "").trim();
+        const currentPassword = body.current_password || "";
+        const newPassword = body.new_password || "";
+
+        if (!username || !currentPassword || !newPassword) {
+          return res.status(400).json({ status: "error", message: "All fields are required" });
+        }
+
+        if (username !== ADMIN_CREDENTIALS.username || currentPassword !== ADMIN_CREDENTIALS.password) {
+          return res.status(401).json({ status: "error", message: "Current password is incorrect" });
+        }
+
+        if (newPassword.length < 4) {
+          return res.status(400).json({ status: "error", message: "New password must be at least 4 characters" });
+        }
+
+        ADMIN_CREDENTIALS = { username, password: newPassword };
+        console.log(`[ADMIN] password changed for user=${username}`);
+        saveState();
+
+        return res.json({ status: "ok", message: "Password updated" });
+      }
 
     /*
     |--------------------------------------------------------------------------
@@ -494,12 +602,31 @@ app.get("/cgi-bin/dashboard", (req, res) => {
     status: "ok",
     total_sales: totalSales,
     daily_sales: dailySales,
+    monthly_sales: monthlySales,
     active_users: devices.length,
+    total_clients_served: servedClients.size,
     esp8266_status:
       Date.now() - esp8266LastSeen < 30000
         ? "online"
         : "offline",
     devices,
+  });
+});
+
+// ---------------------------------------------------------
+// GET /cgi-bin/reset-clients
+// Reset Total Clients Served counter
+// ---------------------------------------------------------
+app.get("/cgi-bin/reset-clients", (req, res) => {
+  servedClients.clear();
+  saveState(); // persist so the reset survives a server restart
+
+  console.log("[ADMIN] Total Clients Served reset to 0");
+
+  return res.json({
+    status: "ok",
+    total_clients_served: 0,
+    message: "Total Clients Served has been reset."
   });
 });
 
@@ -530,3 +657,5 @@ app.listen(PORT, "0.0.0.0", () => {
     `LAN portal: http://192.168.1.208:${PORT}/portal.html`
   );
 });
+
+// originally, the server was listening on
