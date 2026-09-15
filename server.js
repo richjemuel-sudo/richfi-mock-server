@@ -60,6 +60,21 @@ let paymentTotal = 0;
 
 const PAYMENT_LOCK_TIMEOUT_MS = 45000; // slightly longer than the 30s frontend countdown
 
+/*
+|--------------------------------------------------------------------------
+| Anti-Abuse: Repeated "Insert Coin" Clicks Without a Coin
+|--------------------------------------------------------------------------
+|
+| Tracks, per MAC, how many payment windows in a row closed (cancelled or
+| timed out) with zero coins inserted. After MAX_FAILED_ATTEMPTS in a row,
+| that MAC is blocked from starting a new payment window for BLOCK_DURATION_MS.
+| Any successful coin insertion resets the count to 0.
+|
+*/
+const paymentAttempts = new Map(); // mac -> { failCount, blockedUntil }
+const MAX_FAILED_ATTEMPTS = 6;
+const BLOCK_DURATION_MS = 3 * 60 * 1000; // 3 minutes
+
 // ------------------------- DATA LIMIT -------------------------------------
 let DATA_LIMIT = { upload: "5Mbps", download: "5Mbps" }; // default
 
@@ -302,6 +317,17 @@ function handlePisowifi(req, res) {
 
       releaseStaleLock();   // ← add this line
 
+      const attempts = paymentAttempts.get(mac);
+      if (attempts && attempts.blockedUntil && Date.now() < attempts.blockedUntil) {
+        const retryAfterSeconds = Math.ceil((attempts.blockedUntil - Date.now()) / 1000);
+        console.log(`[PAYMENT] mac=${mac} blocked - retry in ${retryAfterSeconds}s`);
+        return res.status(429).json({
+          status: "blocked",
+          message: "Too many attempts without inserting a coin. Please wait before trying again.",
+          retry_after_seconds: retryAfterSeconds,
+        });
+      }
+
       if (waitingClientMac && waitingClientMac !== mac) {
         return res.status(409).json({
           status: "busy",
@@ -353,6 +379,10 @@ case "coin": {
 
   const secondsAdded = rate.seconds;
   const mac = waitingClientMac;
+
+  // Refresh the payment lock so it doesn't expire while the customer
+  // is actively still inserting coins (mirrors the 30s frontend reset).
+  waitingSince = Date.now();
 
   const session = getOrCreateSession(mac);
   const currentRemaining = getRemainingSeconds(session);
@@ -446,6 +476,24 @@ case "resume": {
 
     if (waitingClientMac === mac) {
       console.log(`[PAYMENT] ended for client=${waitingClientMac}`);
+
+      if (paymentTotal === 0) {
+        // Payment window closed with no coin inserted — count it as a failed attempt.
+        const attempts = paymentAttempts.get(mac) || { failCount: 0, blockedUntil: 0 };
+        attempts.failCount += 1;
+
+        if (attempts.failCount >= MAX_FAILED_ATTEMPTS) {
+          attempts.blockedUntil = Date.now() + BLOCK_DURATION_MS;
+          attempts.failCount = 0;
+          console.log(`[PAYMENT] mac=${mac} blocked for ${BLOCK_DURATION_MS / 1000}s after ${MAX_FAILED_ATTEMPTS} attempts with no coin`);
+        }
+
+        paymentAttempts.set(mac, attempts);
+      } else {
+        // At least one coin was inserted this attempt — they're a genuine customer.
+        paymentAttempts.delete(mac);
+      }
+
       waitingClientMac = null;
       waitingSince = null;
     }

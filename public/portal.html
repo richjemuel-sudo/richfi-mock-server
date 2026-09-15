@@ -238,6 +238,7 @@
       <!-- BUTTONS -->
 
       <button class="btn btn-green" id="mainActionBtn" onclick="handleMainAction()">INSERT COIN</button>
+      <div id="blockedNotice" style="display:none; color:#c0392b; font-size:13px; font-weight:600; text-align:center; margin-top:8px;"></div>
       <button class="btn btn-outline orange" id="pauseBtn" style="display:none;" onclick="pauseTime()">Pause Time</button>
       <button class="btn btn-outline" onclick="showRates()">WIFI RATES</button>
 
@@ -270,6 +271,7 @@
   const params = new URLSearchParams(window.location.search);
   const mac = params.get("clientmac") || params.get("mac") || "";
   const POLL_MS = 3000;
+  const PAYING_POLL_MS = 1000; // faster polling while waiting for a coin
 
   // WiFi rates are loaded from the RichFi backend
 
@@ -297,6 +299,33 @@
   const timeRemainingEl = document.getElementById("timeRemaining");
   const payCountdownEl = document.getElementById("payCountdown");
   const totalAmountEl = document.getElementById("totalAmount");
+  const blockedNoticeEl = document.getElementById("blockedNotice");
+
+  let blockedUntilClient = 0;
+  let blockedTimerInterval = null;
+
+  function showBlockedNotice(retryAfterSeconds) {
+    blockedUntilClient = Date.now() + retryAfterSeconds * 1000;
+    mainActionBtn.disabled = true;
+    blockedNoticeEl.style.display = "block";
+    updateBlockedNotice();
+    clearInterval(blockedTimerInterval);
+    blockedTimerInterval = setInterval(updateBlockedNotice, 1000);
+  }
+
+  function updateBlockedNotice() {
+    const secondsLeft = Math.max(0, Math.ceil((blockedUntilClient - Date.now()) / 1000));
+    if (secondsLeft <= 0) {
+      clearInterval(blockedTimerInterval);
+      blockedNoticeEl.style.display = "none";
+      mainActionBtn.disabled = false;
+      return;
+    }
+    const m = Math.floor(secondsLeft / 60);
+    const s = secondsLeft % 60;
+    blockedNoticeEl.textContent =
+      "Too many attempts without inserting a coin. Try again in " + m + "m " + (s < 10 ? "0" : "") + s + "s.";
+  }
 
   function render() {
     if (state === "disconnected") {
@@ -363,6 +392,51 @@
 
   }
 
+  // ---- AUDIO FEEDBACK ----
+  // Synthesized two-note "ding" played on coin insertion — no audio file needed.
+  let audioCtx = null;
+  function playCoinChime() {
+    try {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (audioCtx.state === "suspended") {
+        audioCtx.resume();
+      }
+      const now = audioCtx.currentTime;
+      [880, 1320].forEach((freq, i) => {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = "sine";
+        osc.frequency.value = freq;
+        const start = now + i * 0.12;
+        gain.gain.setValueAtTime(0.0001, start);
+        gain.gain.exponentialRampToValueAtTime(0.3, start + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.3);
+        osc.connect(gain).connect(audioCtx.destination);
+        osc.start(start);
+        osc.stop(start + 0.35);
+      });
+    } catch (e) {
+      console.warn("Coin chime failed:", e);
+    }
+  }
+
+  // Spoken prompt via the browser's built-in text-to-speech.
+  function speakInsertCoin() {
+    try {
+      if (!("speechSynthesis" in window)) return;
+      window.speechSynthesis.cancel(); // stop any prior utterance
+      const utter = new SpeechSynthesisUtterance("You may now insert coin");
+      utter.rate = 1;
+      utter.pitch = 1;
+      utter.volume = 1;
+      window.speechSynthesis.speak(utter);
+    } catch (e) {
+      console.warn("Speech synthesis failed:", e);
+    }
+  }
+
     // ---- ACTIONS ----
   async function startPayment() {
 
@@ -383,6 +457,11 @@
 
     console.log("Start payment response:", data);
 
+    if (data.status === "blocked") {
+      showBlockedNotice(data.retry_after_seconds || 180);
+      return;
+    }
+
     if (data.status !== "waiting") {
       console.error("Unable to start payment:", data);
       return;
@@ -395,6 +474,7 @@
     payCountdown = 30;
 
     render();
+    speakInsertCoin();
 
     console.log(
       "Waiting for coin for client:",
@@ -598,18 +678,18 @@ async function checkStatus() {
           secondsRemaining = data.seconds_remaining;
         }
 
-        if (typeof data.payment_total === "number") {
-          totalAmount = data.payment_total;
-        }
-
         if (state === "paying") {
           const newTotal = typeof data.payment_total === "number" ? data.payment_total : totalAmount;
           if (newTotal > totalAmount) {
             totalAmount = newTotal;
             payCountdown = 30;
+            playCoinChime();
           }
           render();
         }  else {
+            if (typeof data.payment_total === "number") {
+              totalAmount = data.payment_total;
+            }
             state = "connected";
             if (!isPaused) {
               secondsRemaining = data.seconds_remaining;
@@ -638,7 +718,10 @@ async function checkStatus() {
     console.error("Status request failed:", error);
   }
 
-  setTimeout(checkStatus, POLL_MS);
+  // Poll faster while actively waiting for a coin so the countdown/total
+  // update feels instant; back off to the normal cadence otherwise.
+  const nextPollMs = state === "paying" ? PAYING_POLL_MS : POLL_MS;
+  setTimeout(checkStatus, nextPollMs);
 }
 
   render();
