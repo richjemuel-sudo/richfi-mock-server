@@ -4,6 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>RichFi</title>
+<script>
+  // Nodogsplash serves this file AS the splash page, and substitutes its
+  // template variables (like $clientmac) directly into the HTML at serve
+  // time - it does NOT pass them as URL query params. If this file is ever
+  // loaded some other way (not via the real captive-portal redirect), the
+  // literal text "$clientmac" is left untouched, so we detect and ignore that.
+  window.__NDS_CLIENTMAC__ = "$clientmac";
+</script>
 
 <style>
 
@@ -269,9 +277,20 @@
   // ---- CONFIG ----
 
   const params = new URLSearchParams(window.location.search);
-  const mac = params.get("clientmac") || params.get("mac") || "";
+  const rawInjectedMac = window.__NDS_CLIENTMAC__ || "";
+  const injectedMac = rawInjectedMac.indexOf("$") === -1 ? rawInjectedMac : "";
+  // Best-effort synchronous guess from URL/template - may be empty if
+  // nodogsplash hadn't finished registering this client yet. resolveMac()
+  // below fixes that up asynchronously via the backend right after load.
+  let mac = params.get("clientmac") || params.get("mac") || injectedMac || "";
+  // Portal is served by nodogsplash's own webserver (port 2050), but the
+  // CGI backend lives on the router's real webserver (uhttpd, port 80).
+  // Relative fetch("/cgi-bin/...") would resolve against :2050 and 404,
+  // so every API call must point at port 80 explicitly.
+  
+  const API_BASE = "http://" + window.location.hostname + ":8888/cgi-bin/pisowifi";
   const POLL_MS = 3000;
-  const PAYING_POLL_MS = 1000; // faster polling while waiting for a coin
+  const PAYING_POLL_MS = 400; // near-realtime while waiting for coin
 
   // WiFi rates are loaded from the RichFi backend
 
@@ -284,6 +303,7 @@
   let secondsRemaining = 0;
   let payCountdown = 30;
   let totalAmount = 0;
+  let paymentCreditedSeconds = 0;
   
   let payingTimer = null;
   let sessionTimer = null;
@@ -359,8 +379,17 @@
       statusVal.className = isAuthorized ? "val connected" : "val disconnected";
       timeBox.style.display = "none";
       payingBox.style.display = "block";
-      mainActionBtn.textContent = "Done Paying";
-      mainActionBtn.className = "btn btn-green";
+
+      if (totalAmount > 0) {
+        mainActionBtn.textContent = "Connect Now";
+        mainActionBtn.className = "btn btn-green";
+        mainActionBtn.disabled = false;
+      } else {
+        mainActionBtn.textContent = "Waiting for coin...";
+        mainActionBtn.className = "btn btn-green";
+        mainActionBtn.disabled = true;
+      }
+
       pauseBtn.style.display = "none";
       payCountdownEl.textContent = payCountdown;
       totalAmountEl.innerHTML = "&#8369; " + totalAmount;
@@ -438,95 +467,76 @@
   }
 
     // ---- ACTIONS ----
-  async function startPayment() {
 
-  if (!mac) {
-    console.error("No client MAC address found.");
-    return;
+  // Ask the backend to resolve our MAC from our own request IP - a
+  // reliable fallback for when nodogsplash's $clientmac substitution came
+  // back empty (happens for a device that just this second joined).
+  async function resolveMac() {
+    if (mac) return mac;
+    try {
+      const res = await fetch(API_BASE + "?action=whoami");
+      const data = await res.json();
+      if (data.status === "ok" && data.mac) {
+        mac = data.mac;
+        console.log("Resolved MAC from backend:", mac);
+      }
+    } catch (e) {
+      console.warn("Could not resolve MAC from backend:", e);
+    }
+    return mac;
   }
 
-  try {
-
-    // Tell backend this customer is waiting for a coin
-    const response = await fetch(
-      "/cgi-bin/pisowifi?action=start_payment&mac=" +
-      encodeURIComponent(mac)
-    );
-
-    const data = await response.json();
-
-    console.log("Start payment response:", data);
-
-    if (data.status === "blocked") {
-      showBlockedNotice(data.retry_after_seconds || 180);
-      return;
-    }
-
-    if (data.status !== "waiting") {
-      console.error("Unable to start payment:", data);
-      return;
-    }
-
-    // Backend successfully registered this customer
-    // as the one waiting for payment.
+ async function startPayment() {
+    // Show payment UI immediately so the phone feels realtime,
+    // even if MAC resolution is still in flight in the background.
     state = "paying";
+    clearInterval(sessionTimer);
+    paymentCreditedSeconds = 0;
     totalAmount = 0;
     payCountdown = 30;
-
     render();
     speakInsertCoin();
-
-    console.log(
-      "Waiting for coin for client:",
-      data.mac
-    );
-
-    // Start/restart the 30-second payment countdown
     startPaymentCountdown();
 
-    /*
-     * Get the CURRENT backend time.
-     * This becomes our baseline.
-     */
-    const statusResponse = await fetch(
-      "/cgi-bin/pisowifi?action=status&mac=" +
-      encodeURIComponent(mac)
-    );
+    if (!mac) {
+      await resolveMac();
+    }
 
-    const statusData = await statusResponse.json();
+    if (!mac) {
+      console.error("No client MAC address found.");
+      clearInterval(payingTimer);
+      state = "disconnected";
+      render();
+      return;
+    }
 
-    console.log("Payment starting time:", statusData);
+    try {
+      const response = await fetch(
+        API_BASE + "?action=start_payment&mac=" +
+        encodeURIComponent(mac) +
+        "&_=" + Date.now(),
+        { cache: "no-store" }
+      );
 
-    paymentStartSeconds =
-      Number(statusData.seconds_remaining) || 0;
+      const data = await response.json();
+      console.log("Start payment response:", data);
 
-    secondsRemaining = paymentStartSeconds;
+      if (data.status === "blocked") {
+        clearInterval(payingTimer);
+        state = secondsRemaining > 0 ? "connected" : "disconnected";
+        render();
+        showBlockedNotice(data.retry_after_seconds || 180);
+        return;
+      }
 
-    /*
-     * Enter payment mode
-     */
-    state = "paying";
-
-    payCountdown = 30;
-    totalAmount = 0;
-
-    render();
-
-    console.log(
-      "Waiting for coin. Starting seconds:",
-      paymentStartSeconds
-    );
-
-    startPaymentCountdown();
-
-  } catch (error) {
-
-    console.error(
-      "Payment request failed:",
-      error
-    );
+      if (data.status !== "waiting") {
+        console.error("Unable to start payment:", data);
+      }
+    } catch (error) {
+      console.error("Start payment request failed:", error);
+    }
   }
-}
+
 
 async function handleMainAction() {
   if (state === "disconnected" || state === "connected") {
@@ -535,6 +545,8 @@ async function handleMainAction() {
   }
 
   if (state === "paying") {
+    
+    if (totalAmount <= 0) return; // button disabled anyway, but guard just in case
     console.log("Done Paying clicked.");
     clearInterval(payingTimer);
 
@@ -547,28 +559,26 @@ async function handleMainAction() {
     render();
 
     // Tell backend this payment window is closed
-    fetch("/cgi-bin/pisowifi?action=end_payment&mac=" + encodeURIComponent(mac))
+    fetch(API_BASE + "?action=end_payment&mac=" + encodeURIComponent(mac))
       .catch(err => console.error("End payment request failed:", err));
   }
 }
 
-    function startPaymentCountdown() {
-    clearInterval(payingTimer);
+function startPaymentCountdown() {
+  clearInterval(payingTimer);
 
-    payCountdown = 30;
+  payCountdown = 30;
+  payCountdownEl.textContent = payCountdown;
+
+  payingTimer = setInterval(() => {
+    payCountdown--;
     payCountdownEl.textContent = payCountdown;
-
-    payingTimer = setInterval(() => {
-
-      payCountdown--;
-
-      payCountdownEl.textContent = payCountdown;
 
     if (payCountdown <= 0) {
       clearInterval(payingTimer);
       console.log("Payment timeout.");
 
-      if (totalAmount > 0) {
+      if (totalAmount > 0 || secondsRemaining > paymentStartSeconds) {
         state = "connected";
         startSessionCountdown();
       } else {
@@ -577,22 +587,20 @@ async function handleMainAction() {
 
       render();
 
-      // Payment window closed — clear waiting state on backend
-      fetch("/cgi-bin/pisowifi?action=end_payment&mac=" + encodeURIComponent(mac))
+      fetch(API_BASE + "?action=end_payment&mac=" + encodeURIComponent(mac))
         .catch(err => console.error("End payment request failed:", err));
     }
+  }, 1000);
+}
 
-    }, 1000);
-  }
-
-  function pauseTime() {
+function pauseTime() {
   isPaused = true;
   clearInterval(sessionTimer);
   pauseBtn.textContent = "Resume Time";
   pauseBtn.onclick = resumeTime;
   render();
 
-  fetch("/cgi-bin/pisowifi?action=pause&mac=" + encodeURIComponent(mac))
+  fetch(API_BASE + "?action=pause&mac=" + encodeURIComponent(mac))
     .catch(err => console.error("Pause request failed:", err));
 }
 
@@ -603,7 +611,7 @@ function resumeTime() {
   pauseBtn.onclick = pauseTime;
   render();
 
-  fetch("/cgi-bin/pisowifi?action=resume&mac=" + encodeURIComponent(mac))
+  fetch(API_BASE + "?action=resume&mac=" + encodeURIComponent(mac))
     .catch(err => console.error("Resume request failed:", err));
 }
 
@@ -627,7 +635,9 @@ function resumeTime() {
 
 async function loadRates() {
   try {
-    const response = await fetch("/cgi-bin/pisowifi?action=rates");
+    const response = await fetch(API_BASE + "?action=rates&_=" + Date.now(), {
+      cache: "no-store"
+    });
     const data = await response.json();
     if (data.status === "ok") {
       RATE_TABLE = data.rates;
@@ -648,78 +658,80 @@ async function checkStatus() {
 
   try {
     const response = await fetch(
-      "/cgi-bin/pisowifi?action=status&mac=" +
-      encodeURIComponent(mac)
+      API_BASE + "?action=status&mac=" + encodeURIComponent(mac) + "&_=" + Date.now(),
+      { cache: "no-store" }
     );
 
     const data = await response.json();
-
     console.log("Status:", data);
 
-    // ==========================================
-    // CUSTOMER HAS ACTIVE WIFI TIME
-    // ==========================================
     if (data.status === "authorized" && data.seconds_remaining > 0) {
+      if (data.is_paused !== isPaused) {
+        isPaused = data.is_paused;
 
-        // Sync pause state from backend — source of truth, survives refresh
-        if (data.is_paused !== isPaused) {
-          isPaused = data.is_paused;
-          if (isPaused) {
-            clearInterval(sessionTimer);
-            pauseBtn.textContent = "Resume Time";
-            pauseBtn.onclick = resumeTime;
-          } else {
-            pauseBtn.textContent = "Pause Time";
-            pauseBtn.onclick = pauseTime;
+        if (isPaused) {
+          clearInterval(sessionTimer);
+          pauseBtn.textContent = "Resume Time";
+          pauseBtn.onclick = resumeTime;
+        } else {
+          pauseBtn.textContent = "Pause Time";
+          pauseBtn.onclick = pauseTime;
+        }
+      }
+
+      const backendSeconds = Number(data.seconds_remaining) || 0;
+
+      if (state === "paying") {
+        const backendTotal = Number(data.payment_total) || 0;
+        const creditedNow = Math.max(0, backendSeconds - paymentStartSeconds);
+
+        let coinDetected = false;
+
+        if (backendTotal > totalAmount) {
+          totalAmount = backendTotal;
+          coinDetected = true;
+        }
+
+        if (creditedNow > paymentCreditedSeconds) {
+          paymentCreditedSeconds = creditedNow;
+          coinDetected = true;
+
+          if (totalAmount <= 0) {
+            const matchedRate = RATE_TABLE.find(rate => Number(rate.seconds) === creditedNow);
+            totalAmount = matchedRate ? Number(matchedRate.peso) || 1 : 1;
           }
         }
+
+        if (coinDetected) {
+          payCountdown = 30;
+          playCoinChime();
+        }
+
+        secondsRemaining = backendSeconds;
+        render();
+      } else {
+        state = "connected";
+        secondsRemaining = backendSeconds;
 
         if (!isPaused) {
-          secondsRemaining = data.seconds_remaining;
+          startSessionCountdown();
         }
 
-        if (state === "paying") {
-          const newTotal = typeof data.payment_total === "number" ? data.payment_total : totalAmount;
-          if (newTotal > totalAmount) {
-            totalAmount = newTotal;
-            payCountdown = 30;
-            playCoinChime();
-          }
-          render();
-        }  else {
-            if (typeof data.payment_total === "number") {
-              totalAmount = data.payment_total;
-            }
-            state = "connected";
-            if (!isPaused) {
-              secondsRemaining = data.seconds_remaining;
-              startSessionCountdown();
-            } else {
-              secondsRemaining = data.seconds_remaining; // server returns pausedRemaining when paused anyway
-            }
-            render();
-          }
-      } else {
-      // ==========================================
-      // NO ACTIVE WIFI TIME
-      // ==========================================
+        render();
+      }
+    } else {
       secondsRemaining = 0;
 
       if (state !== "paying") {
         state = "disconnected";
-
         clearInterval(sessionTimer);
-
         render();
       }
     }
-
   } catch (error) {
     console.error("Status request failed:", error);
   }
 
-  // Poll faster while actively waiting for a coin so the countdown/total
-  // update feels instant; back off to the normal cadence otherwise.
   const nextPollMs = state === "paying" ? PAYING_POLL_MS : POLL_MS;
   setTimeout(checkStatus, nextPollMs);
 }
@@ -727,16 +739,18 @@ async function checkStatus() {
   render();
   loadRates();
 
-  if (mac) {
-
-    checkStatus();
-
-  } else {
-
-    console.warn(
-      "No MAC address was provided in the URL."
-    );
-  }
+  (async function initMac() {
+    if (!mac) {
+      await resolveMac();
+    }
+    if (mac) {
+      checkStatus();
+    } else {
+      console.warn(
+        "No MAC address was provided in the URL, and the backend could not resolve one from this IP either."
+      );
+    }
+  })();
 
 </script>
 </body>

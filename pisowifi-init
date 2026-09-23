@@ -1,0 +1,14 @@
+#!/bin/sh /etc/rc.common
+# Ensures /etc/pisowifi exists with valid config/state before other
+# services start relying on it. Idempotent - safe to run every boot.
+
+START=19
+STOP=90
+
+USE_PROCD=0
+
+start() {
+  . /www/cgi-bin/lib/pisowifi-common.sh
+  pisowifi_bootstrap
+  logger -t pisowifi "boot check complete - config/state validated"
+}

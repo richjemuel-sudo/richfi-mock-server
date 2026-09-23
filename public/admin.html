@@ -486,75 +486,80 @@
   );
 }
 
+
+const ADMIN_API_BASE = "http://" + window.location.hostname + ":8888/cgi-bin/pisowifi";
   //---------------- WiFi Rates -------------------------
 
-  async function loadRates() {
+async function loadRates() {
+  try {
+    const container = document.getElementById("ratesContainer");
+    container.innerHTML = "";
+
+    const res = await fetch(ADMIN_API_BASE + "?action=rates&_=" + Date.now(), {
+      cache: "no-store"
+    });
+
+    const data = await res.json();
+
+    if (data.status === "ok") {
+      data.rates.forEach(r => addRateBlock({
+        name: r.label,
+        price: r.peso,
+        minutes: Math.floor(Number(r.seconds) / 60),
+        expiration: ""
+      }));
+    } else {
+      showToast("Failed to load rates.", "error");
+    }
+  } catch (err) {
+    console.error("Rates load failed:", err);
+    showToast("Rates load failed.", "error");
+  }
+}
+
+async function saveRates() {
+    const blocks = document.querySelectorAll("#ratesContainer .section-block");
+
+    const rates = Array.from(blocks).map(b => {
+      const inputs = b.querySelectorAll("input");
+      return {
+        name: inputs[0].value.trim(),
+        price: Number(inputs[1].value),
+        minutes: Number(inputs[2].value)
+      };
+    }).filter(r => r.name && r.price > 0 && r.minutes > 0);
+
+    if (rates.length === 0) {
+      showToast("Please add at least one valid rate.", "error");
+      return;
+    }
+
     try {
-      const res = await fetch("/cgi-bin/pisowifi?action=rates");
+      const res = await fetch(ADMIN_API_BASE + "?action=update_rates&_=" + Date.now(), {
+      method: "POST",
+      cache: "no-store",
+      body: JSON.stringify(rates)
+    });
       const data = await res.json();
+
       if (data.status === "ok") {
-        data.rates.forEach(r => addRateBlock({
-          name: r.label,
-          price: r.peso,
-          minutes: Math.floor(r.seconds / 60),
-          expiration: ""
-        }));
+        showToast("Successfully saved!", "success");
+        await loadRates();
+      } else {
+        showToast("Failed to save rates: " + (data.message || "unknown error"), "error");
       }
     } catch (err) {
-      console.error("Rates load failed:", err);
+      console.error("Save rates failed:", err);
+      showToast("Failed to save rates.", "error");
     }
   }
 
-  //--------------TOAST NOTIFICATION------------------------
-  let toastTimer = null;
-  function showToast(message, type = "success") {
-    const el = document.getElementById("toast");
-    clearTimeout(toastTimer);
-    el.textContent = message;
-    el.className = "toast show " + type;
-    toastTimer = setTimeout(() => {
-      el.classList.remove("show");
-    }, 2500);
-  }
-
-  //--------------SAVE RATES------------------------
-    async function saveRates() {
-      const blocks = document.querySelectorAll("#ratesContainer .section-block");
-      const rates = Array.from(blocks).map(b => {
-        const inputs = b.querySelectorAll("input");
-        return {
-          name: inputs[0].value,
-          price: inputs[1].value,
-          minutes: inputs[2].value,
-          expiration: inputs[3].value
-        };
-      });
-
-      try {
-        const res = await fetch("/cgi-bin/pisowifi?action=update_rates", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(rates)
-        });
-        const data = await res.json();
-
-        if (data.status === "ok") {
-          showToast("Successfully saved!", "success");
-        } else {
-          showToast("Failed to save rates: " + data.message, "error");
-        }
-      } catch (err) {
-        console.error("Save rates failed:", err);
-        showToast("Failed to save rates — check console.", "error");
-      }
-    }
-
-  function togglePass() {
+function togglePass() {
     const p = document.getElementById("loginPass");
     p.type = p.type === "password" ? "text" : "password";
   }
 
-  function togglePassword(id, icon) {
+function togglePassword(id, icon) {
     const input = document.getElementById(id);
 
     if (input.type === "password") {
@@ -566,7 +571,7 @@
     }
   }
   
-  async function doLogin() {
+async function doLogin() {
     const u = document.getElementById("loginUser").value.trim();
     const p = document.getElementById("loginPass").value;
     const err = document.getElementById("loginError");
@@ -605,7 +610,7 @@
     }
   }
 
-  function doLogout() {
+function doLogout() {
     sessionStorage.removeItem("richfi_admin_session");
     sessionStorage.removeItem("richfi_admin_user");
     document.getElementById("loginUser").value = "";
@@ -618,7 +623,7 @@
     go("dashboard");
   }
 
-  function openSidebar() {
+function openSidebar() {
     document.getElementById("sidebar").classList.add("open");
     document.getElementById("sidebarOverlay").classList.add("show");
   }
@@ -631,7 +636,7 @@
 
   let confirmCallback = null;
 
-  function confirmAction(title, message, onYes, yesLabel) {
+function confirmAction(title, message, onYes, yesLabel) {
     document.getElementById("confirmTitle").textContent = title;
     document.getElementById("confirmMsg").textContent = message;
     document.getElementById("confirmYesBtn").textContent = yesLabel || "Yes";
