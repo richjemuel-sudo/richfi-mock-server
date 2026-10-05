@@ -1,0 +1,10 @@
+{
+  "total_sales": 22,
+  "daily_sales": 22,
+  "monthly_sales": 22,
+  "served_clients": ["B2:93:11:8A:9C:84","12:33:2C:8F:27:33","34:5A:60:2D:02:BC"],
+  "waiting_mac": "",
+  "waiting_since": 0,
+  "payment_total": 7,
+  "esp_last_seen": 1789744322
+}

@@ -197,57 +197,6 @@
   }
 
   .btn-outline.orange { color: var(--orange); }
-  .voucher-row {
-    display: flex;
-    gap: 8px;
-    margin-bottom: 12px;
-    align-items: stretch;
-  }
-
-  .voucher-row input {
-    flex: 1;
-    padding: 11px 12px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    font-size: 13px;
-    color: var(--dark);
-    outline: none;
-    min-width: 0;
-  }
-
-  .voucher-row input:focus {
-    border-color: var(--blue);
-  }
-
-  .voucher-row input::placeholder {
-    color: var(--muted);
-  }
-
-  .btn-done {
-    padding: 11px 16px;
-    border-radius: 8px;
-    font-size: 13px;
-    font-weight: 700;
-    border: none;
-    cursor: pointer;
-    background: var(--blue);
-    color: #fff;
-    letter-spacing: 0.3px;
-    white-space: nowrap;
-    flex-shrink: 0;
-  }
-
-  .btn-done:active { opacity: 0.85; }
-  .btn-done:disabled { opacity: 0.5; cursor: not-allowed; }
-
-  #voucherMsg {
-    text-align: center;
-    font-size: 12px;
-    font-weight: 600;
-    margin-bottom: 8px;
-    min-height: 16px;
-  }
-
   .footer-note {
 
     text-align: center;
@@ -301,15 +250,6 @@
       <button class="btn btn-outline orange" id="pauseBtn" style="display:none;" onclick="pauseTime()">Pause Time</button>
       <button class="btn btn-outline" onclick="showRates()">WIFI RATES</button>
 
-      <!-- VOUCHER BOX -->
-      <div id="voucherMsg"></div>
-      <div class="voucher-row">
-        <input type="text" id="voucherInput" placeholder="Enter voucher code here..."
-          autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false"
-          oninput="onVoucherInput()" onkeydown="if(event.key==='Enter') redeemVoucher()">
-        <button class="btn-done" id="voucherDoneBtn" onclick="redeemVoucher()" disabled>DONE</button>
-      </div>
-
       <div class="footer-note">
 
         Powered by <b>RichFi</b><br>
@@ -350,7 +290,7 @@
   
   const API_BASE = "http://" + window.location.hostname + ":8888/cgi-bin/pisowifi";
   const POLL_MS = 3000;
-  const PAYING_POLL_MS = 400; // near-realtime while waiting for coin
+  const PAYING_POLL_MS = 250; // near-realtime while waiting for coin
 
   // WiFi rates are loaded from the RichFi backend
 
@@ -363,7 +303,6 @@
   let secondsRemaining = 0;
   let payCountdown = 30;
   let totalAmount = 0;
-  let paymentCreditedSeconds = 0;
   
   let payingTimer = null;
   let sessionTimer = null;
@@ -439,17 +378,8 @@
       statusVal.className = isAuthorized ? "val connected" : "val disconnected";
       timeBox.style.display = "none";
       payingBox.style.display = "block";
-
-      if (totalAmount > 0) {
-        mainActionBtn.textContent = "Connect Now";
-        mainActionBtn.className = "btn btn-green";
-        mainActionBtn.disabled = false;
-      } else {
-        mainActionBtn.textContent = "Waiting for coin...";
-        mainActionBtn.className = "btn btn-green";
-        mainActionBtn.disabled = true;
-      }
-
+      mainActionBtn.textContent = "Done Paying";
+      mainActionBtn.className = "btn btn-green";
       pauseBtn.style.display = "none";
       payCountdownEl.textContent = payCountdown;
       totalAmountEl.innerHTML = "&#8369; " + totalAmount;
@@ -546,56 +476,59 @@
     return mac;
   }
 
- async function startPayment() {
-    // Show payment UI immediately so the phone feels realtime,
-    // even if MAC resolution is still in flight in the background.
+  async function startPayment() {
+  if (!mac) {
+    await resolveMac();
+  }
+
+  if (!mac) {
+    console.error("No client MAC address found.");
+    return;
+  }
+
+  try {
+    const response = await fetch(
+      API_BASE + "?action=start_payment&mac=" + encodeURIComponent(mac)
+    );
+
+    const data = await response.json();
+    console.log("Start payment response:", data);
+
+    if (data.status === "blocked") {
+      showBlockedNotice(data.retry_after_seconds || 180);
+      return;
+    }
+
+    if (data.status !== "waiting") {
+      console.error("Unable to start payment:", data);
+      return;
+    }
+
+    const statusResponse = await fetch(
+      API_BASE + "?action=status&mac=" + encodeURIComponent(mac) + "&_=" + Date.now()
+    );
+
+    const statusData = await statusResponse.json();
+    console.log("Payment starting time:", statusData);
+
+    paymentStartSeconds = Number(statusData.seconds_remaining) || 0;
+    secondsRemaining = paymentStartSeconds;
+
     state = "paying";
     clearInterval(sessionTimer);
     paymentCreditedSeconds = 0;
     totalAmount = 0;
     payCountdown = 30;
+
     render();
     speakInsertCoin();
     startPaymentCountdown();
 
-    if (!mac) {
-      await resolveMac();
-    }
-
-    if (!mac) {
-      console.error("No client MAC address found.");
-      clearInterval(payingTimer);
-      state = "disconnected";
-      render();
-      return;
-    }
-
-    try {
-      const response = await fetch(
-        API_BASE + "?action=start_payment&mac=" +
-        encodeURIComponent(mac) +
-        "&_=" + Date.now(),
-        { cache: "no-store" }
-      );
-
-      const data = await response.json();
-      console.log("Start payment response:", data);
-
-      if (data.status === "blocked") {
-        clearInterval(payingTimer);
-        state = secondsRemaining > 0 ? "connected" : "disconnected";
-        render();
-        showBlockedNotice(data.retry_after_seconds || 180);
-        return;
-      }
-
-      if (data.status !== "waiting") {
-        console.error("Unable to start payment:", data);
-      }
-    } catch (error) {
-      console.error("Start payment request failed:", error);
-    }
+    console.log("Waiting for coin for client:", data.mac);
+  } catch (error) {
+    console.error("Payment request failed:", error);
   }
+}
 
 
 async function handleMainAction() {
@@ -605,8 +538,6 @@ async function handleMainAction() {
   }
 
   if (state === "paying") {
-    
-    if (totalAmount <= 0) return; // button disabled anyway, but guard just in case
     console.log("Done Paying clicked.");
     clearInterval(payingTimer);
 
@@ -691,81 +622,11 @@ function resumeTime() {
 
   }
 
-// ----- VOUCHER -----
-
-  const voucherInput  = document.getElementById("voucherInput");
-  const voucherDoneBtn = document.getElementById("voucherDoneBtn");
-  const voucherMsg    = document.getElementById("voucherMsg");
-
-  function onVoucherInput() {
-    voucherDoneBtn.disabled = voucherInput.value.trim().length === 0;
-    voucherMsg.textContent = "";
-    voucherMsg.style.color = "";
-  }
-
-  async function redeemVoucher() {
-    const code = voucherInput.value.trim().toUpperCase();
-    if (!code) return;
-
-    if (!mac) await resolveMac();
-    if (!mac) {
-      setVoucherMsg("Could not identify your device.", "var(--red)");
-      return;
-    }
-
-    voucherDoneBtn.disabled = true;
-    setVoucherMsg("Checking voucher...", "var(--muted)");
-
-    try {
-      const res = await fetch(
-        API_BASE + "?action=redeem_voucher&mac=" + encodeURIComponent(mac) +
-        "&code=" + encodeURIComponent(code) + "&_=" + Date.now(),
-        { cache: "no-store" }
-      );
-      const data = await res.json();
-
-      if (data.status === "ok") {
-        voucherInput.value = "";
-        voucherDoneBtn.disabled = true;
-        setVoucherMsg(
-          "✓ " + (data.message || "Voucher redeemed! Time added."),
-          "var(--green-dark)"
-        );
-        // Refresh session state immediately
-        if (data.seconds_added) {
-          secondsRemaining += Number(data.seconds_added);
-          if (state !== "paying") {
-            state = "connected";
-            startSessionCountdown();
-            render();
-          }
-        }
-      } else {
-        setVoucherMsg(
-          data.message || "Invalid or already used voucher.",
-          "var(--red)"
-        );
-        voucherDoneBtn.disabled = false;
-      }
-    } catch (e) {
-      console.error("Voucher redeem failed:", e);
-      setVoucherMsg("Request failed. Try again.", "var(--red)");
-      voucherDoneBtn.disabled = false;
-    }
-  }
-
-  function setVoucherMsg(text, color) {
-    voucherMsg.textContent = text;
-    voucherMsg.style.color = color;
-  }
-
 // ----- New load Rates not hardcoded ---- 
 
 async function loadRates() {
   try {
-    const response = await fetch(API_BASE + "?action=rates&_=" + Date.now(), {
-      cache: "no-store"
-    });
+    const response = await fetch(API_BASE + "?action=rates");
     const data = await response.json();
     if (data.status === "ok") {
       RATE_TABLE = data.rates;
@@ -810,19 +671,24 @@ async function checkStatus() {
       const backendSeconds = Number(data.seconds_remaining) || 0;
 
       if (state === "paying") {
-
         const backendTotal = Number(data.payment_total) || 0;
+        const creditedNow = Math.max(0, backendSeconds - paymentStartSeconds);
 
         let coinDetected = false;
 
-        // Backend payment_total is the ONLY proof that a coin was credited.
         if (backendTotal > totalAmount) {
           totalAmount = backendTotal;
           coinDetected = true;
+        }
 
-          console.log(
-            "COIN CONFIRMED BY BACKEND: ₱" + totalAmount
-          );
+        if (creditedNow > paymentCreditedSeconds) {
+          paymentCreditedSeconds = creditedNow;
+          coinDetected = true;
+
+          if (totalAmount <= 0) {
+            const matchedRate = RATE_TABLE.find(rate => Number(rate.seconds) === creditedNow);
+            totalAmount = matchedRate ? Number(matchedRate.peso) || 1 : 1;
+          }
         }
 
         if (coinDetected) {
@@ -831,11 +697,8 @@ async function checkStatus() {
         }
 
         secondsRemaining = backendSeconds;
-
         render();
-      }
-      
-      else {
+      } else {
         state = "connected";
         secondsRemaining = backendSeconds;
 

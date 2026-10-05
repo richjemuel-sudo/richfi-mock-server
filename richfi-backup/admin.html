@@ -198,120 +198,6 @@
   .confirm-box .confirm-msg { font-size: 13.5px; color: var(--muted); margin-bottom: 18px; line-height: 1.5; }
   .confirm-box .confirm-actions { display: flex; gap: 10px; }
   .confirm-box .confirm-actions .btn { margin-bottom: 0; }
-
-  /* ---- Voucher Generator ---- */
-  .vgen-card {
-    border: 1px solid var(--border); border-radius: 10px;
-    margin: 14px 18px; padding: 16px 14px;
-  }
-  .vgen-card-header { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
-  .vgen-card-header .vgen-icon { font-size: 18px; color: var(--blue); }
-  .vgen-card-header h3 { margin: 0; font-size: 14.5px; color: var(--blue); font-weight: 700; }
-  .vgen-card-header p { margin: 3px 0 0; font-size: 12px; color: var(--muted); }
-  .vgen-row { display: flex; gap: 10px; }
-  .vgen-row .vgen-field { flex: 1; }
-  .vgen-field { margin-bottom: 12px; }
-  .vgen-field label { display: block; font-size: 12px; font-weight: 700; color: var(--dark); margin-bottom: 5px; }
-  .vgen-field input {
-    width: 100%; box-sizing: border-box; padding: 9px 10px;
-    border: 1px solid var(--border); border-radius: 6px; font-size: 13px;
-    outline: none; transition: border-color 0.15s;
-  }
-  .vgen-field input:focus { border-color: var(--blue); }
-  .vgen-field input.error { border-color: var(--red); }
-  .vgen-field .vgen-err { font-size: 11px; color: var(--red); margin-top: 3px; display: none; }
-  .vgen-field .vgen-err.show { display: block; }
-  .vgen-price-wrap { position: relative; }
-  .vgen-price-wrap input { padding-right: 42px; }
-  .vgen-price-wrap .currency-badge {
-    position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
-    font-size: 11px; font-weight: 700; color: var(--muted);
-  }
-  .vgen-seg { display: flex; gap: 0; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
-  .vgen-seg button {
-    flex: 1; border: none; background: #fff; padding: 9px 0;
-    font-size: 13px; font-weight: 600; color: var(--muted); cursor: pointer;
-    transition: background 0.15s, color 0.15s;
-  }
-  .vgen-seg button.active { background: var(--blue); color: #fff; }
-  .vgen-hint {
-    background: #fff8ed; border: 1px solid #f5a623; border-radius: 6px;
-    padding: 9px 12px; margin: 0 18px 14px; font-size: 11.5px; color: #b36800;
-    display: flex; align-items: flex-start; gap: 6px; line-height: 1.5;
-  }
-  .vgen-hint .hint-icon { flex-shrink: 0; margin-top: 1px; }
-
-  /* ---- Print Vouchers ---- */
-  .pv-batch-info {
-    background: #f0f9f0; border: 1.5px solid var(--green); border-radius: 10px;
-    margin: 14px 18px; padding: 13px 14px; display: flex;
-    align-items: center; gap: 12px;
-  }
-  .pv-batch-info .pv-check { font-size: 22px; color: var(--green); }
-  .pv-batch-info .pv-batch-title { font-size: 14px; font-weight: 700; color: var(--green); margin-bottom: 2px; }
-  .pv-batch-info .pv-batch-sub { font-size: 12px; color: var(--muted); }
-  .pv-actions { display: flex; gap: 10px; margin: 0 18px 14px; }
-  .pv-actions .btn { margin-bottom: 0; flex: 1; padding: 11px 8px; }
-  .pv-grid-label {
-    padding: 0 18px 8px; font-size: 12.5px; font-weight: 700;
-    color: var(--blue); text-transform: uppercase; letter-spacing: 0.5px;
-    display: flex; justify-content: space-between; align-items: center;
-  }
-  .pv-grid-label span { color: var(--muted); font-size: 12px; text-transform: none; font-weight: 400; }
-  .pv-grid {
-    padding: 0 18px; display: grid;
-    grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 18px;
-  }
-  .pv-card {
-    border: 1.5px dashed var(--border); border-radius: 8px;
-    padding: 10px 10px 8px; background: #fff;
-    display: flex; flex-direction: column; gap: 4px;
-  }
-  .pv-card-brand { font-size: 10px; font-weight: 800; color: var(--blue); letter-spacing: 0.5px; }
-  .pv-card-name { font-size: 11px; color: var(--muted); }
-  .pv-card-code {
-    font-size: 14px; font-weight: 800; color: var(--dark);
-    letter-spacing: 1px; font-family: monospace;
-  }
-  .pv-card-meta { font-size: 10.5px; color: var(--muted); }
-  .pv-card-price { font-size: 12px; font-weight: 700; color: var(--blue); margin-top: 2px; }
-  .pv-cut-note {
-    text-align: center; font-size: 11px; color: var(--muted);
-    margin: 2px 18px 16px; padding-top: 6px;
-    border-top: 1px dashed var(--border);
-  }
-  .pv-back-btn {
-    display: block; margin: 0 18px 20px; padding: 11px 0;
-    border: 1.5px solid var(--border); border-radius: 8px;
-    background: #fff; color: var(--blue); font-size: 13.5px;
-    font-weight: 700; text-align: center; cursor: pointer;
-  }
-
-  /* ---- Print CSS ---- */
-  @media print {
-    .topbar, .sidebar, .sidebar-overlay, .toast,
-    .confirm-overlay, .pv-actions, .pv-back-btn, .pv-cut-note,
-    .hexbg { display: none !important; }
-    body, .app { background: #fff; max-width: 100%; }
-    .view { display: none !important; }
-    #view-print-vouchers { display: block !important; padding: 0; }
-    .pv-batch-info { border: 1px solid #999; background: #f5f5f5; margin: 8px 0 10px; }
-    .pv-grid {
-      display: grid; grid-template-columns: repeat(4, 1fr);
-      gap: 6mm; padding: 0; margin: 0;
-    }
-    .pv-grid-label { padding: 0 0 6px; }
-    .pv-card {
-      border: 1px solid #000; border-radius: 4mm;
-      padding: 4mm; page-break-inside: avoid; break-inside: avoid;
-    }
-    .pv-card-brand { font-size: 8pt; }
-    .pv-card-name { font-size: 7pt; }
-    .pv-card-code { font-size: 10pt; letter-spacing: 0.5pt; }
-    .pv-card-meta { font-size: 7pt; }
-    .pv-card-price { font-size: 9pt; }
-    @page { margin: 12mm; size: A4; }
-  }
 </style>
 </head>
 <body>
@@ -478,159 +364,6 @@
     </div>
   </div>
 
-  <!-- ================= VOUCHER GENERATOR VIEW ================= -->
-  <div class="view" id="view-vouchers" role="main" aria-label="Voucher Generator">
-    <div class="topbar">
-      <button class="hamburger" onclick="openSidebar()" aria-label="Open menu">&#9776;</button>
-      <div>
-        <h2 style="margin:0;font-size:16px;">Voucher Generator</h2>
-        <div style="font-size:11px;color:var(--muted);">Voucher Management / Create vouchers</div>
-      </div>
-    </div>
-
-    <div class="vgen-card">
-      <div class="vgen-card-header">
-        <div>
-          <h3>New voucher batch</h3>
-          <p>Set the access details, then generate printable codes.</p>
-        </div>
-      </div>
-
-      <!-- Prefix + Quantity -->
-      <div class="vgen-row">
-        <div class="vgen-field">
-          <label for="vg-prefix">Voucher Prefix</label>
-          <input type="text" id="vg-prefix" value="RF" maxlength="8" placeholder="e.g. RF"
-                 aria-required="true" autocomplete="off">
-          <div class="vgen-err" id="vg-prefix-err"></div>
-        </div>
-        <div class="vgen-field">
-          <label for="vg-qty">Quantity</label>
-          <input type="number" id="vg-qty" value="12" min="1" max="200" placeholder="1–200"
-                 aria-required="true" oninput="vgQtySync(this)">
-          <div class="vgen-err" id="vg-qty-err"></div>
-        </div>
-      </div>
-
-      <!-- Voucher Name -->
-      <div class="vgen-field">
-        <label for="vg-name">Voucher Name</label>
-        <input type="text" id="vg-name" placeholder="e.g. 2-Hour Access" maxlength="60"
-               aria-required="true" autocomplete="off">
-        <div class="vgen-err" id="vg-name-err"></div>
-      </div>
-
-      <!-- Price -->
-      <div class="vgen-field">
-        <label for="vg-price">Voucher Price</label>
-        <div class="vgen-price-wrap">
-          <input type="number" id="vg-price" value="20.00" min="0" step="0.01" placeholder="0.00"
-                 aria-required="true" aria-describedby="vg-currency">
-          <span class="currency-badge" id="vg-currency">PHP</span>
-        </div>
-        <div class="vgen-err" id="vg-price-err"></div>
-      </div>
-
-      <!-- Duration -->
-      <div class="vgen-field">
-        <label>Duration</label>
-        <div class="vgen-row">
-          <div class="vgen-field" style="margin-bottom:0;">
-            <label for="vg-days" style="font-weight:400;color:var(--muted);">Days</label>
-            <input type="number" id="vg-days" value="0" min="0" max="365" placeholder="0"
-                   aria-required="true">
-          </div>
-          <div class="vgen-field" style="margin-bottom:0;">
-            <label for="vg-hours" style="font-weight:400;color:var(--muted);">Hours</label>
-            <input type="number" id="vg-hours" value="2" min="0" max="23" placeholder="0–23"
-                   aria-required="true">
-          </div>
-          <div class="vgen-field" style="margin-bottom:0;">
-            <label for="vg-mins" style="font-weight:400;color:var(--muted);">Minutes</label>
-            <input type="number" id="vg-mins" value="0" min="0" max="59" placeholder="0–59"
-                   aria-required="true">
-          </div>
-        </div>
-        <div class="vgen-err" id="vg-dur-err"></div>
-      </div>
-
-      <!-- Save Sales -->
-      <div class="vgen-field">
-        <label>Do you want to save sales?</label>
-        <div class="vgen-seg" role="group" aria-label="Save sales option">
-          <button id="vg-sales-yes" class="active" onclick="setSaveSales(true)"
-                  aria-pressed="true">Yes</button>
-          <button id="vg-sales-no" onclick="setSaveSales(false)"
-                  aria-pressed="false">No</button>
-        </div>
-      </div>
-
-      <!-- Generate button -->
-      <button class="btn btn-blue" id="vg-generate-btn" onclick="generateVouchers()"
-              aria-busy="false">
-        Generate <span id="vg-btn-qty">12</span> Vouchers
-      </button>
-    </div>
-
-    <div class="vgen-hint" role="note" aria-label="Tip">
-      <span class="hint-icon">&#9432;</span>
-      <span>Prefixes make batches easy to identify. Codes are unique and ready to print after generation.</span>
-    </div>
-
-    <div class="footer-note">Voucher Management &bull; Admin access</div>
-  </div>
-
-  <!-- ================= PRINT VOUCHERS VIEW ================= -->
-  <div class="view" id="view-print-vouchers" role="main" aria-label="Print Vouchers">
-    <div class="topbar" id="pv-topbar">
-      <button class="hamburger" onclick="openSidebar()" aria-label="Open menu">&#9776;</button>
-      <div>
-        <h2 style="margin:0;font-size:16px;">Print Vouchers</h2>
-        <div style="font-size:11px;color:var(--muted);">Voucher Management / Generated batch</div>
-      </div>
-    </div>
-
-    <!-- Batch summary -->
-    <div class="pv-batch-info" id="pv-batch-info" aria-live="polite">
-      <span class="pv-check">&#10004;</span>
-      <div>
-        <div class="pv-batch-title" id="pv-batch-title">0 vouchers generated</div>
-        <div class="pv-batch-sub" id="pv-batch-sub">—</div>
-      </div>
-    </div>
-
-    <!-- Action buttons -->
-    <div class="pv-actions">
-      <button class="btn btn-blue" onclick="printVouchers()" aria-label="Print vouchers">
-        &#128438; Print
-      </button>
-      <button class="btn btn-outline" onclick="copyAllCodes()" id="pv-copy-btn"
-              aria-label="Copy all voucher codes">
-        &#128203; Copy all
-      </button>
-    </div>
-
-    <!-- Grid label -->
-    <div class="pv-grid-label" id="pv-grid-label">
-      RICHFI ACCESS VOUCHERS
-      <span id="pv-price-label">P20 &bull; 2 hours access</span>
-    </div>
-
-    <!-- Voucher card grid -->
-    <div class="pv-grid" id="pv-grid" role="list" aria-label="Generated voucher codes"></div>
-
-    <div class="pv-cut-note" aria-hidden="true">
-      &#9986; Cut on the dotted lines. Each code can be used once.
-    </div>
-
-    <!-- Back button -->
-    <button class="pv-back-btn" onclick="go('vouchers')" aria-label="Back to voucher management">
-      &#8592; Back to Voucher Management
-    </button>
-
-    <div class="footer-note">Voucher Management &bull; Admin access</div>
-  </div>
-
   <!-- ================= SIDEBAR ================= -->
   <div class="sidebar-overlay" id="sidebarOverlay" onclick="closeSidebar()"></div>
   <div class="sidebar" id="sidebar">
@@ -640,7 +373,6 @@
       <a onclick="go('dashboard')">Dashboard</a>
       <a onclick="go('network')">Network &amp; Devices</a>
       <a onclick="go('rates')">WiFi Rates</a>
-      <a onclick="go('vouchers')">Vouchers</a>
       <a onclick="go('about')">About</a>
       <a onclick="go('changepass')">Change Password</a>
       <a class="logout" onclick="doLogout()">Logout</a>
@@ -754,80 +486,75 @@
   );
 }
 
-
-const ADMIN_API_BASE = "http://" + window.location.hostname + ":8080/cgi-bin/pisowifi";
   //---------------- WiFi Rates -------------------------
 
-async function loadRates() {
-  try {
-    const container = document.getElementById("ratesContainer");
-    container.innerHTML = "";
-
-    const res = await fetch(ADMIN_API_BASE + "?action=rates&_=" + Date.now(), {
-      cache: "no-store"
-    });
-
-    const data = await res.json();
-
-    if (data.status === "ok") {
-      data.rates.forEach(r => addRateBlock({
-        name: r.label,
-        price: r.peso,
-        minutes: Math.floor(Number(r.seconds) / 60),
-        expiration: ""
-      }));
-    } else {
-      showToast("Failed to load rates.", "error");
-    }
-  } catch (err) {
-    console.error("Rates load failed:", err);
-    showToast("Rates load failed.", "error");
-  }
-}
-
-async function saveRates() {
-    const blocks = document.querySelectorAll("#ratesContainer .section-block");
-
-    const rates = Array.from(blocks).map(b => {
-      const inputs = b.querySelectorAll("input");
-      return {
-        name: inputs[0].value.trim(),
-        price: Number(inputs[1].value),
-        minutes: Number(inputs[2].value)
-      };
-    }).filter(r => r.name && r.price > 0 && r.minutes > 0);
-
-    if (rates.length === 0) {
-      showToast("Please add at least one valid rate.", "error");
-      return;
-    }
-
+  async function loadRates() {
     try {
-      const res = await fetch(ADMIN_API_BASE + "?action=update_rates&_=" + Date.now(), {
-      method: "POST",
-      cache: "no-store",
-      body: JSON.stringify(rates)
-    });
+      const res = await fetch("/cgi-bin/pisowifi?action=rates");
       const data = await res.json();
-
       if (data.status === "ok") {
-        showToast("Successfully saved!", "success");
-        await loadRates();
-      } else {
-        showToast("Failed to save rates: " + (data.message || "unknown error"), "error");
+        data.rates.forEach(r => addRateBlock({
+          name: r.label,
+          price: r.peso,
+          minutes: Math.floor(r.seconds / 60),
+          expiration: ""
+        }));
       }
     } catch (err) {
-      console.error("Save rates failed:", err);
-      showToast("Failed to save rates.", "error");
+      console.error("Rates load failed:", err);
     }
   }
 
-function togglePass() {
+  //--------------TOAST NOTIFICATION------------------------
+  let toastTimer = null;
+  function showToast(message, type = "success") {
+    const el = document.getElementById("toast");
+    clearTimeout(toastTimer);
+    el.textContent = message;
+    el.className = "toast show " + type;
+    toastTimer = setTimeout(() => {
+      el.classList.remove("show");
+    }, 2500);
+  }
+
+  //--------------SAVE RATES------------------------
+    async function saveRates() {
+      const blocks = document.querySelectorAll("#ratesContainer .section-block");
+      const rates = Array.from(blocks).map(b => {
+        const inputs = b.querySelectorAll("input");
+        return {
+          name: inputs[0].value,
+          price: inputs[1].value,
+          minutes: inputs[2].value,
+          expiration: inputs[3].value
+        };
+      });
+
+      try {
+        const res = await fetch("/cgi-bin/pisowifi?action=update_rates", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(rates)
+        });
+        const data = await res.json();
+
+        if (data.status === "ok") {
+          showToast("Successfully saved!", "success");
+        } else {
+          showToast("Failed to save rates: " + data.message, "error");
+        }
+      } catch (err) {
+        console.error("Save rates failed:", err);
+        showToast("Failed to save rates — check console.", "error");
+      }
+    }
+
+  function togglePass() {
     const p = document.getElementById("loginPass");
     p.type = p.type === "password" ? "text" : "password";
   }
 
-function togglePassword(id, icon) {
+  function togglePassword(id, icon) {
     const input = document.getElementById(id);
 
     if (input.type === "password") {
@@ -839,7 +566,7 @@ function togglePassword(id, icon) {
     }
   }
   
-async function doLogin() {
+  async function doLogin() {
     const u = document.getElementById("loginUser").value.trim();
     const p = document.getElementById("loginPass").value;
     const err = document.getElementById("loginError");
@@ -878,7 +605,7 @@ async function doLogin() {
     }
   }
 
-function doLogout() {
+  function doLogout() {
     sessionStorage.removeItem("richfi_admin_session");
     sessionStorage.removeItem("richfi_admin_user");
     document.getElementById("loginUser").value = "";
@@ -891,7 +618,7 @@ function doLogout() {
     go("dashboard");
   }
 
-function openSidebar() {
+  function openSidebar() {
     document.getElementById("sidebar").classList.add("open");
     document.getElementById("sidebarOverlay").classList.add("show");
   }
@@ -904,7 +631,7 @@ function openSidebar() {
 
   let confirmCallback = null;
 
-function confirmAction(title, message, onYes, yesLabel) {
+  function confirmAction(title, message, onYes, yesLabel) {
     document.getElementById("confirmTitle").textContent = title;
     document.getElementById("confirmMsg").textContent = message;
     document.getElementById("confirmYesBtn").textContent = yesLabel || "Yes";
@@ -1048,278 +775,6 @@ function confirmAction(title, message, onYes, yesLabel) {
   function deleteRate(id) {
     document.getElementById(id).remove();
   }
-
-  // ============================================================
-  // VOUCHER GENERATOR — Business Logic
-  // ============================================================
-
-  /** Shared state: last generated batch passed from generator to print view */
-  const voucherState = {
-    batch: null   // { prefix, name, price, days, hours, mins, saveSales, codes[], createdAt }
-  };
-
-  let vgSaveSales = true;
-
-  function setSaveSales(val) {
-    vgSaveSales = val;
-    document.getElementById('vg-sales-yes').classList.toggle('active', val);
-    document.getElementById('vg-sales-yes').setAttribute('aria-pressed', String(val));
-    document.getElementById('vg-sales-no').classList.toggle('active', !val);
-    document.getElementById('vg-sales-no').setAttribute('aria-pressed', String(!val));
-  }
-
-  // Keep generate-button label in sync with quantity input — called by oninput
-  function vgQtySync(el) {
-    const n = parseInt(el.value) || 0;
-    const span = document.getElementById('vg-btn-qty');
-    if (span) span.textContent = n;
-  }
-
-  /**
-   * Generate a unique voucher code with format: PREFIX-XXXX-XXXX
-   * Uses alphanumeric chars (uppercase, no ambiguous I/O/0/1)
-   */
-  function generateCode(prefix, existingCodes) {
-    const digits = '0123456789';
-    let code, attempts = 0;
-    do {
-      const num = Array.from({length: 4}, () => digits[Math.floor(Math.random() * digits.length)]).join('');
-      code = (prefix.trim().toUpperCase() || 'RF') + num;
-      attempts++;
-    } while (existingCodes.has(code) && attempts < 10000);
-    return code;
-  }
-
-  /** Inline validation — returns true if valid */
-  function validateVoucherForm() {
-    let ok = true;
-
-    function setErr(fieldId, errId, msg) {
-      const input = document.getElementById(fieldId);
-      const errEl = document.getElementById(errId);
-      if (msg) {
-        input.classList.add('error');
-        errEl.textContent = msg;
-        errEl.classList.add('show');
-        ok = false;
-      } else {
-        input.classList.remove('error');
-        errEl.classList.remove('show');
-      }
-    }
-
-    const prefix = document.getElementById('vg-prefix').value.trim();
-    const name   = document.getElementById('vg-name').value.trim();
-    const qty    = parseInt(document.getElementById('vg-qty').value);
-    const price  = parseFloat(document.getElementById('vg-price').value);
-    const days   = parseInt(document.getElementById('vg-days').value) || 0;
-    const hours  = parseInt(document.getElementById('vg-hours').value) || 0;
-    const mins   = parseInt(document.getElementById('vg-mins').value) || 0;
-
-    setErr('vg-prefix', 'vg-prefix-err', prefix === '' ? 'Prefix is required.' : null);
-    setErr('vg-name',   'vg-name-err',   name === ''   ? 'Voucher name is required.' : null);
-
-    if (!qty || qty < 1) {
-      setErr('vg-qty', 'vg-qty-err', 'Quantity must be at least 1.'); ok = false;
-    } else if (qty > 200) {
-      setErr('vg-qty', 'vg-qty-err', 'Maximum 200 vouchers per batch.'); ok = false;
-    } else {
-      setErr('vg-qty', 'vg-qty-err', null);
-    }
-
-    if (isNaN(price) || price < 0) {
-      setErr('vg-price', 'vg-price-err', 'Price cannot be negative.'); ok = false;
-    } else {
-      setErr('vg-price', 'vg-price-err', null);
-    }
-
-    // Duration validation
-    const durErr = document.getElementById('vg-dur-err');
-    let durMsg = null;
-    if (days < 0 || hours < 0 || mins < 0) {
-      durMsg = 'Duration values cannot be negative.';
-    } else if (hours > 23) {
-      durMsg = 'Hours must be between 0 and 23.';
-    } else if (mins > 59) {
-      durMsg = 'Minutes must be between 0 and 59.';
-    } else if (days === 0 && hours === 0 && mins === 0) {
-      durMsg = 'At least one duration value must be greater than zero.';
-    }
-    if (durMsg) {
-      durErr.textContent = durMsg;
-      durErr.classList.add('show');
-      ok = false;
-    } else {
-      durErr.classList.remove('show');
-    }
-
-    return ok;
-  }
-
-  async function generateVouchers() {
-    if (!validateVoucherForm()) return;
-
-    const btn = document.getElementById('vg-generate-btn');
-    btn.disabled = true;
-    btn.setAttribute('aria-busy', 'true');
-    btn.textContent = '⏳ Generating…';
-
-    try {
-      const prefix  = document.getElementById('vg-prefix').value.trim().toUpperCase() || 'RF';
-      const name    = document.getElementById('vg-name').value.trim();
-      const qty     = parseInt(document.getElementById('vg-qty').value);
-      const price   = parseFloat(document.getElementById('vg-price').value) || 0;
-      const days    = parseInt(document.getElementById('vg-days').value) || 0;
-      const hours   = parseInt(document.getElementById('vg-hours').value) || 0;
-      const mins    = parseInt(document.getElementById('vg-mins').value) || 0;
-      const seconds = (days * 86400) + (hours * 3600) + (mins * 60);
-
-      // Generate unique codes client-side
-      const existingCodes = new Set();
-      const codes = [];
-      for (let i = 0; i < qty; i++) {
-        const code = generateCode(prefix, existingCodes);
-        existingCodes.add(code);
-        codes.push(code);
-      }
-
-      voucherState.batch = {
-        prefix, name, price, days, hours, mins,
-        saveSales: vgSaveSales, codes,
-        createdAt: new Date()
-      };
-
-      // Save to router backend
-      btn.textContent = '⏳ Saving to router…';
-      const res = await fetch(ADMIN_API_BASE + '?action=generate_vouchers&_=' + Date.now(), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prefix, name, price, seconds, qty,
-          save_sales: vgSaveSales,
-          codes
-        })
-      });
-
-      const data = await res.json();
-
-      if (data.status !== 'ok') {
-        showToast('Save failed: ' + (data.message || 'Unknown error'), 'error');
-        return;
-      }
-
-      renderPrintView(voucherState.batch);
-      go('print-vouchers');
-      showToast(data.saved + ' voucher(s) saved to router!', 'success');
-
-    } catch (e) {
-      console.error('generateVouchers error:', e);
-      showToast('Generation failed. Check router connection.', 'error');
-    } finally {
-      btn.disabled = false;
-      btn.setAttribute('aria-busy', 'false');
-      const currentQty = document.getElementById('vg-qty').value || '?';
-      btn.innerHTML = 'Generate <span id="vg-btn-qty">' + currentQty + '</span> Vouchers';
-    }
-  }
-
-  // ============================================================
-  // PRINT VOUCHERS — Render & Actions
-  // ============================================================
-
-  function formatDuration(days, hours, mins) {
-    const parts = [];
-    if (days > 0) parts.push(days + (days === 1 ? ' day' : ' days'));
-    if (hours > 0) parts.push(hours + (hours === 1 ? ' hour' : ' hours'));
-    if (mins > 0) parts.push(mins + (mins === 1 ? ' min' : ' mins'));
-    return parts.join(' ') || '0 mins';
-  }
-
-  function renderPrintView(batch) {
-    const { prefix, name, price, days, hours, mins, codes, createdAt } = batch;
-    const qty = codes.length;
-    const durStr = formatDuration(days, hours, mins);
-    const priceStr = '₱' + price.toFixed(2);
-    const dateStr = createdAt.toLocaleDateString('en-PH', {
-      year: 'numeric', month: 'short', day: 'numeric',
-      hour: '2-digit', minute: '2-digit'
-    });
-
-    // Batch info banner
-    document.getElementById('pv-batch-title').textContent =
-      qty + ' voucher' + (qty !== 1 ? 's' : '') + ' generated';
-    document.getElementById('pv-batch-sub').textContent =
-      priceStr + ' each  •  ' + durStr + '  •  Prefix ' + prefix;
-
-    // Grid label
-    document.getElementById('pv-price-label').innerHTML =
-      priceStr + ' &bull; ' + durStr + ' access';
-
-    // Render cards
-    const grid = document.getElementById('pv-grid');
-    grid.innerHTML = '';
-    codes.forEach(function(code) {
-      const card = document.createElement('div');
-      card.className = 'pv-card';
-      card.setAttribute('role', 'listitem');
-      card.setAttribute('aria-label', 'Voucher code ' + code);
-      card.innerHTML =
-        '<div class="pv-card-brand">RICHFI ACCESS</div>' +
-        '<div class="pv-card-name">' + escHtml(name) + '</div>' +
-        '<div class="pv-card-code">' + escHtml(code) + '</div>' +
-        '<div class="pv-card-meta">' + durStr + ' access</div>' +
-        '<div class="pv-card-price">' + priceStr + '</div>';
-      grid.appendChild(card);
-    });
-  }
-
-  function printVouchers() {
-    if (!voucherState.batch) {
-      showToast('No voucher batch to print.', 'error');
-      return;
-    }
-    window.print();
-  }
-
-  function copyAllCodes() {
-    if (!voucherState.batch || !voucherState.batch.codes.length) {
-      showToast('No codes to copy.', 'error');
-      return;
-    }
-    const text = voucherState.batch.codes.join('\n');
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text).then(function() {
-        showToast(voucherState.batch.codes.length + ' codes copied!', 'success');
-      }).catch(function() { fallbackCopy(text); });
-    } else {
-      fallbackCopy(text);
-    }
-  }
-
-  function fallbackCopy(text) {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.style.cssText = 'position:fixed;left:-9999px;top:0;';
-    document.body.appendChild(ta);
-    ta.focus(); ta.select();
-    try {
-      document.execCommand('copy');
-      showToast('Codes copied to clipboard!', 'success');
-    } catch(e) {
-      showToast('Copy failed — please copy manually.', 'error');
-    }
-    document.body.removeChild(ta);
-  }
-
-  function escHtml(str) {
-    return String(str)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
-  }
-
-  // ============================================================
 
   async function saveNewPassword() {
     const cur = document.getElementById("curPass").value;

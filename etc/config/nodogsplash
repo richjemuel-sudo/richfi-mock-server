@@ -1,0 +1,23 @@
+
+config nodogsplash
+	option enabled '1'
+	option fwhook_enabled '1'
+	option gatewayinterface 'br-lan'
+	option gatewayname 'PisoWiFi'
+	option maxclients '250'
+	option preauthidletimeout '30'
+	option authidletimeout '120'
+	option sessiontimeout '1200'
+	option checkinterval '600'
+	list authenticated_users 'allow all'
+	list users_to_router 'allow tcp port 22'
+	list users_to_router 'allow tcp port 23'
+	list users_to_router 'allow tcp port 53'
+	list users_to_router 'allow udp port 53'
+	list users_to_router 'allow udp port 67'
+	list users_to_router 'allow tcp port 80'
+	list users_to_router 'allow tcp port 8888'
+	option webroot '/www/splash'
+	option splashpage 'index.html'
+	option webroot_path '/www/splash'
+

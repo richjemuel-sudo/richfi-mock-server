@@ -7,6 +7,12 @@
 
 . /usr/share/libubox/jshn.sh
 
+# --------------------------------------------------------------------------
+# Paths - everything persistent now lives on flash under /etc/pisowifi.
+# Atomic writes + wear-leveling on OpenWrt's overlay fs make this safe;
+# a coin machine's write frequency (per coin/pause/resume, not per second)
+# is well within flash endurance for the life of the device.
+# --------------------------------------------------------------------------
 BASE_DIR="/etc/pisowifi"
 CONFIG_FILE="$BASE_DIR/config.json"
 CONFIG_LOCK="$BASE_DIR/config.lock"
@@ -18,7 +24,7 @@ ATTEMPT_DIR="$BASE_DIR/attempts"
 
 mkdir -p "$BASE_DIR" "$SESS_DIR" "$LOCK_DIR" "$ATTEMPT_DIR"
 
-PAYMENT_LOCK_TIMEOUT_S=30
+PAYMENT_LOCK_TIMEOUT_S=45
 MAX_FAILED_ATTEMPTS=6
 BLOCK_DURATION_S=180
 
@@ -28,39 +34,48 @@ log() {
 
 now() { date +%s; }
 
+# --------------------------------------------------------------------------
+# Atomic write: write to a temp file IN THE SAME DIRECTORY as the target
+# (so the final `mv` is a same-filesystem rename, which is atomic - the
+# target file is either fully old or fully new, never half-written even
+# if power is cut mid-write), then fsync-ish via sync before the rename.
+# Usage:  atomic_write /path/to/file <<EOF
+#         ...content...
+#         EOF
+# --------------------------------------------------------------------------
 atomic_write() {
   local target="$1"
   local dir tmp
   dir="$(dirname "$target")"
   tmp="$dir/.tmp.$$.$(basename "$target")"
   cat > "$tmp"
+  sync 2>/dev/null
   mv "$tmp" "$target"
 }
 
-_flock_wait() {
-  local fd="$1" timeout="$2" waited=0
-  while ! flock -x -n "$fd" 2>/dev/null; do
-    waited=$((waited + 1))
-    [ "$waited" -ge "$((timeout * 10))" ] && return 1
-    sleep 0.1
-  done
-  return 0
-}
-
-lock_config()   { exec 201>"$CONFIG_LOCK"; _flock_wait 201 5 || log "config lock timeout"; }
+# --------------------------------------------------------------------------
+# Locking: flock on a dedicated lockfile via a fixed fd per lock "class".
+# Different classes use different fds so a single request can hold more
+# than one (e.g. coin touches both a session and the global state).
+# Always acquire in this order to avoid deadlocks: CONFIG -> STATE -> SESSION
+# --------------------------------------------------------------------------
+lock_config()   { exec 201>"$CONFIG_LOCK";            flock -x -w 5 201 || log "config lock timeout"; }
 unlock_config() { flock -u 201 2>/dev/null; exec 201>&-; }
 
-lock_state()    { exec 200>"$STATE_LOCK"; _flock_wait 200 5 || log "state lock timeout"; }
+lock_state()    { exec 200>"$STATE_LOCK";              flock -x -w 5 200 || log "state lock timeout"; }
 unlock_state()  { flock -u 200 2>/dev/null; exec 200>&-; }
 
 lock_mac() {
   local mac="$1"
   local lf="$LOCK_DIR/$(mac_file_key "$mac").lock"
   exec 202>"$lf"
-  _flock_wait 202 5 || log "mac lock timeout for $mac"
+  flock -x -w 5 202 || log "mac lock timeout for $mac"
 }
 unlock_mac() { flock -u 202 2>/dev/null; exec 202>&-; }
 
+# --------------------------------------------------------------------------
+# HTTP output
+# --------------------------------------------------------------------------
 http_json() {
   printf "Status: %s\r\n" "$1"
   printf "Content-Type: application/json\r\n"
@@ -68,6 +83,9 @@ http_json() {
   printf "%s" "$2"
 }
 
+# --------------------------------------------------------------------------
+# urldecode + query string / POST body parsing
+# --------------------------------------------------------------------------
 urldecode() {
   local s="${1//+/ }"
   printf '%b' "${s//%/\\x}"
@@ -99,6 +117,9 @@ body_field() {
   printf '%s' "$BODY" | jsonfilter -e "@.$1" 2>/dev/null
 }
 
+# --------------------------------------------------------------------------
+# MAC helpers
+# --------------------------------------------------------------------------
 normalize_mac() {
   echo "$1" | tr 'a-z' 'A-Z' | sed 's/^ *//;s/ *$//'
 }
@@ -110,12 +131,17 @@ mac_file_key() {
 session_file()  { echo "$SESS_DIR/$(mac_file_key "$1").json"; }
 attempt_file()  { echo "$ATTEMPT_DIR/$(mac_file_key "$1").json"; }
 
+# --------------------------------------------------------------------------
+# Validated config load - if config.json is missing OR fails to parse a
+# required field, regenerate safe defaults instead of serving garbage.
+# Caller must hold no relevant lock (this only reads, and only writes
+# under lock_config when repair is actually needed).
+# --------------------------------------------------------------------------
 DEFAULT_CONFIG='{
   "rates": [
-    {"peso":1,"seconds":720,"label":"1 peso / 12 minutes","expire_seconds":0},
-    {"peso":5,"seconds":7200,"label":"5 pesos / 2 hours","expire_seconds":0},
-    {"peso":10,"seconds":18000,"label":"10 pesos / 5 hours","expire_seconds":0},
-    {"peso":20,"seconds":43200,"label":"20 pesos / 12 hours","expire_seconds":0}
+    {"peso":1,"seconds":720,"label":"1 peso / 12 minutes"},
+    {"peso":5,"seconds":7200,"label":"5 pesos / 2 hours"},
+    {"peso":10,"seconds":18000,"label":"10 pesos / 5 hours"}
   ],
   "admin": {"username":"admin","password":"admin"},
   "data_limit": {"upload":"5Mbps","download":"5Mbps"}
@@ -137,6 +163,8 @@ ensure_config_valid() {
   if [ ! -f "$CONFIG_FILE" ]; then
     ok=0
   else
+    # A corrupt/truncated file will make jsonfilter fail or return empty
+    # for a field that must always exist.
     local test_admin
     test_admin="$(jsonfilter -i "$CONFIG_FILE" -e '@.admin.username' 2>/dev/null)"
     [ -z "$test_admin" ] && ok=0
@@ -171,6 +199,10 @@ ensure_state_valid() {
   fi
 }
 
+# --------------------------------------------------------------------------
+# State (global) read/write - caller MUST hold lock_state around the
+# load...mutate...save_state_now sequence for anything that writes.
+# --------------------------------------------------------------------------
 state_get() { jsonfilter -i "$STATE_FILE" -e "@.$1" 2>/dev/null; }
 
 state_load_all() {
@@ -198,6 +230,7 @@ served_clients_count() {
   echo "$ST_SERVED_JSON" | tr ',' '\n' | grep -c '"'
 }
 
+# Must be called while holding lock_state.
 save_state_now() {
   atomic_write "$STATE_FILE" <<EOF
 {
@@ -213,12 +246,15 @@ save_state_now() {
 EOF
 }
 
+# --------------------------------------------------------------------------
+# Session helpers - caller must hold lock_mac "$mac" around any write.
+# --------------------------------------------------------------------------
 ensure_session() {
   local mac="$1" f
   f="$(session_file "$mac")"
   if [ ! -f "$f" ]; then
     atomic_write "$f" <<EOF
-{"mac":"$mac","expires_at":$(now),"paused":0,"paused_remaining":0,"total_paid":0,"last_coin_at":0,"session_start_at":0,"expire_seconds":0}
+{"mac":"$mac","expires_at":$(now),"paused":0,"paused_remaining":0,"total_paid":0,"last_coin_at":0}
 EOF
   fi
 }
@@ -247,34 +283,18 @@ get_remaining_seconds() {
   echo "$rem"
 }
 
+# Must be called while holding lock_mac "$mac".
 write_session() {
   local mac="$1" f
   f="$(session_file "$mac")"
   atomic_write "$f" <<EOF
-{"mac":"$mac","expires_at":$2,"paused":$3,"paused_remaining":$4,"total_paid":$5,"last_coin_at":$6,"session_start_at":$7,"expire_seconds":$8}
+{"mac":"$mac","expires_at":$2,"paused":$3,"paused_remaining":$4,"total_paid":$5,"last_coin_at":$6}
 EOF
 }
 
-enforce_session_expiration() {
-  local mac="$1" start expire_s cur remaining total_paid
-  EXPIRE_ENFORCED=0
-  start="$(get_session_field "$mac" session_start_at)"; [ -z "$start" ] && start=0
-  expire_s="$(get_session_field "$mac" expire_seconds)"; [ -z "$expire_s" ] && expire_s=0
-  remaining="$(get_remaining_seconds "$mac")"
-
-  if [ "$remaining" -gt 0 ] && [ "$expire_s" -gt 0 ] && [ "$start" -gt 0 ]; then
-    cur="$(now)"
-    if [ "$cur" -ge "$((start + expire_s))" ]; then
-      total_paid="$(get_session_field "$mac" total_paid)"
-      write_session "$mac" "$cur" 0 0 "$total_paid" "$(get_session_field "$mac" last_coin_at)" 0 0
-      EXPIRE_ENFORCED=1
-      remaining=0
-      log "mac=$mac session expired at deadline (start=$start expire_seconds=$expire_s)"
-    fi
-  fi
-  EXPIRE_REMAINING="$remaining"
-}
-
+# --------------------------------------------------------------------------
+# Anti-abuse attempt tracking - protected by the same per-mac lock.
+# --------------------------------------------------------------------------
 get_attempt_field() {
   local f
   f="$(attempt_file "$1")"
@@ -292,10 +312,12 @@ clear_attempt() {
   rm -f "$(attempt_file "$1")" 2>/dev/null
 }
 
+# --------------------------------------------------------------------------
+# Rates lookup
+# --------------------------------------------------------------------------
 get_rate_seconds_and_label() {
   RATE_SECONDS=""
   RATE_LABEL=""
-  RATE_EXPIRE_SECONDS="0"
   json_load_file "$CONFIG_FILE"
   json_select rates
   local i=1
@@ -303,18 +325,19 @@ get_rate_seconds_and_label() {
     json_get_var r_peso peso
     json_get_var r_seconds seconds
     json_get_var r_label label
-    json_get_var r_expire expire_seconds 2>/dev/null
     json_select ..
     if [ "$r_peso" = "$1" ]; then
       RATE_SECONDS="$r_seconds"
       RATE_LABEL="$r_label"
-      [ -n "$r_expire" ] && RATE_EXPIRE_SECONDS="$r_expire"
       break
     fi
     i=$((i+1))
   done
 }
 
+# --------------------------------------------------------------------------
+# ndsctl bridge
+# --------------------------------------------------------------------------
 grant_access() {
   local target="$1" secs="$2"
   [ -n "$target" ] || return 1
@@ -359,25 +382,17 @@ grant_client_access() {
 }
 
 deauth_client_access() {
-    local mac="$1"
-    local lower_mac
+  local mac="$1" lower_mac ip
+  [ -n "$mac" ] || return
 
-    [ -n "$mac" ] || return 1
+  lower_mac="$(echo "$mac" | tr 'A-Z' 'a-z')"
+  ip="$(mac_to_ip "$mac")"
 
-    mac="$(normalize_mac "$mac")"
-    lower_mac="$(echo "$mac" | tr 'A-Z' 'a-z')"
+  [ -n "$ip" ] && deauth_access "$ip" >/dev/null 2>&1
+  deauth_access "$lower_mac" >/dev/null 2>&1
+  deauth_access "$mac" >/dev/null 2>&1
 
-    [ -n "$lower_mac" ] || return 1
-
-    log "DEAUTH START mac=$lower_mac"
-
-    if ndsctl deauth "$lower_mac" >/dev/null 2>&1; then
-        log "DEAUTH OK mac=$lower_mac"
-        return 0
-    fi
-
-    log "DEAUTH FAILED mac=$lower_mac"
-    return 1
+  log "deauth client requested mac=$mac lower_mac=$lower_mac ip=$ip"
 }
 
 schedule_deauth() {
@@ -385,6 +400,9 @@ schedule_deauth() {
   [ -n "$mac" ] || return
   [ -n "$secs" ] && [ "$secs" -gt 0 ] 2>/dev/null || return
   (
+    # This background worker is launched from CGI handlers that may still
+    # hold flock fds. Close inherited locks immediately before sleeping,
+    # or one paid session can block every later request for that MAC.
     flock -u 200 2>/dev/null; exec 200>&- 2>/dev/null
     flock -u 201 2>/dev/null; exec 201>&- 2>/dev/null
     flock -u 202 2>/dev/null; exec 202>&- 2>/dev/null
@@ -398,68 +416,26 @@ schedule_deauth() {
   ) >/dev/null 2>&1 &
 }
 
-# --------------------------------------------------------------------------
-# ndsctl json caching (2s TTL) - avoids every request spawning its own
-# slow subprocess when several requests arrive close together.
-# --------------------------------------------------------------------------
-NDS_JSON_CACHE="/tmp/nds_json_cache"
-NDS_JSON_CACHE_TTL=2
-
-get_nds_json() {
-  local ts_file="$NDS_JSON_CACHE.ts" last=0 cur
-  [ -f "$ts_file" ] && last="$(cat "$ts_file" 2>/dev/null)"
-  [ -z "$last" ] && last=0
-  cur="$(now)"
-  if [ "$((cur - last))" -ge "$NDS_JSON_CACHE_TTL" ]; then
-    ndsctl json > "${NDS_JSON_CACHE}.tmp.$$" 2>/dev/null
-    mv "${NDS_JSON_CACHE}.tmp.$$" "$NDS_JSON_CACHE" 2>/dev/null
-    echo "$cur" > "$ts_file"
-  fi
-  cat "$NDS_JSON_CACHE" 2>/dev/null
-}
-
 mac_to_ip() {
-  local mac="$1"
-
-  mac="$(echo "$mac" | tr 'A-Z' 'a-z')"
-
-  awk -v mac="$mac" '
-    NR > 1 && tolower($4) == mac {
-      print $1
-      exit
-    }
-  ' /proc/net/arp 2>/dev/null
+  local mac
+  mac="$(echo "$1" | tr 'A-Z' 'a-z')"
+  ndsctl json 2>/dev/null | jsonfilter -e "@.clients[@.mac=\"$mac\"].ip" 2>/dev/null
 }
 
+# Reverse of mac_to_ip - given the client IP (always reliably known
+# server-side via $REMOTE_ADDR), resolve its MAC from nodogsplash's own
+# client table. Used so the browser never has to depend on nodogsplash's
+# $clientmac template substitution, which can be empty for a brand-new
+# client whose association nodogsplash hasn't finished registering yet.
 ip_to_mac() {
   local ip="$1"
-
-  awk -v ip="$ip" '
-    NR > 1 && $1 == ip {
-      print tolower($4)
-      exit
-    }
-  ' /proc/net/arp 2>/dev/null
+  ndsctl json 2>/dev/null | jsonfilter -e "@.clients[@.ip=\"$ip\"].mac" 2>/dev/null
 }
 
 # --------------------------------------------------------------------------
-# Throttle for status action's self-heal re-auth - don't call ndsctl auth
-# on every 3s poll, only once per REAUTH_THROTTLE_S window per mac.
+# Release stale payment lock - operates on already-loaded ST_* vars.
+# Caller saves afterward if it changed anything relevant.
 # --------------------------------------------------------------------------
-REAUTH_THROTTLE_S=20
-
-should_reauth() {
-  local mac="$1" f="/tmp/pisowifi_reauth_$(mac_file_key "$1")" last=0 cur
-  [ -f "$f" ] && last="$(cat "$f" 2>/dev/null)"
-  [ -z "$last" ] && last=0
-  cur="$(now)"
-  if [ "$((cur - last))" -ge "$REAUTH_THROTTLE_S" ]; then
-    echo "$cur" > "$f"
-    return 0
-  fi
-  return 1
-}
-
 release_stale_lock() {
   if [ -n "$ST_WAITING_MAC" ]; then
     local elapsed=$(( $(now) - ST_WAITING_SINCE ))
@@ -470,6 +446,9 @@ release_stale_lock() {
   fi
 }
 
+# --------------------------------------------------------------------------
+# Bootstrap check every script performs on load.
+# --------------------------------------------------------------------------
 pisowifi_bootstrap() {
   ensure_config_valid
   ensure_state_valid
