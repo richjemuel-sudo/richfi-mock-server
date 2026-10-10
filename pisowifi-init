@@ -10,5 +10,8 @@ USE_PROCD=0
 start() {
   . /www/cgi-bin/lib/pisowifi-common.sh
   pisowifi_bootstrap
-  logger -t pisowifi "boot check complete - config/state validated"
+  # Freeze all active sessions so a brownout does not drain remaining time
+  pause_all_active_sessions
+  logger -t pisowifi "boot check complete - config/state validated, sessions frozen for brownout protection"
+ ## logger -t pisowifi "boot check complete - config/state validated"
 }

@@ -810,21 +810,24 @@ async function checkStatus() {
       const backendSeconds = Number(data.seconds_remaining) || 0;
 
       if (state === "paying") {
-
         const backendTotal = Number(data.payment_total) || 0;
+        const creditedNow = Math.max(0, backendSeconds - paymentStartSeconds);
 
         let coinDetected = false;
 
-        
-        const VALID_COINS = [5, 10, 20];
-        const increase = backendTotal - totalAmount;
-        if (backendTotal > totalAmount && VALID_COINS.includes(increase)) {
+        if (backendTotal > totalAmount) {
           totalAmount = backendTotal;
           coinDetected = true;
+        }
 
-          console.log(
-            "COIN CONFIRMED BY BACKEND: ₱" + totalAmount
-          );
+        if (creditedNow > paymentCreditedSeconds) {
+          paymentCreditedSeconds = creditedNow;
+          coinDetected = true;
+
+          if (totalAmount <= 0) {
+            const matchedRate = RATE_TABLE.find(rate => Number(rate.seconds) === creditedNow);
+            totalAmount = matchedRate ? Number(matchedRate.peso) || 1 : 1;
+          }
         }
 
         if (coinDetected) {
@@ -833,11 +836,8 @@ async function checkStatus() {
         }
 
         secondsRemaining = backendSeconds;
-
         render();
-      }
-      
-      else {
+      } else {
         state = "connected";
         secondsRemaining = backendSeconds;
 

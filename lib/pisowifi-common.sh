@@ -474,3 +474,64 @@ pisowifi_bootstrap() {
   ensure_config_valid
   ensure_state_valid
 }
+
+# --------------------------------------------------------------------------
+# pause_all_active_sessions
+# Called once at boot (from pisowifi-init) to freeze every running session
+# so that a brownout / power cut does not drain the customer's remaining
+# time while the router is off.
+#
+# For each session file where paused=0 and time still remains:
+#   - compute remaining = expires_at - now()
+#   - set paused=1, paused_remaining=remaining
+#
+# When the customer reconnects after the brownout they hit the splash page,
+# see their frozen balance, and tap Resume to re-authorize.
+# --------------------------------------------------------------------------
+pause_all_active_sessions() {
+  local f mac paused expires_at cur remaining
+  local total_paid last_coin session_start expire_s
+
+  cur="$(now)"
+
+  for f in "$SESS_DIR"/*.json; do
+    [ -f "$f" ] || continue
+
+    paused="$(jsonfilter -i "$f" -e '@.paused' 2>/dev/null)"
+    [ "$paused" = "1" ] && continue   # already paused - skip
+
+    expires_at="$(jsonfilter -i "$f" -e '@.expires_at' 2>/dev/null)"
+    [ -z "$expires_at" ] && expires_at=0
+
+    remaining=$((expires_at - cur))
+    [ "$remaining" -le 0 ] && continue  # already expired - skip
+
+    mac="$(jsonfilter -i "$f" -e '@.mac' 2>/dev/null)"
+    [ -z "$mac" ] && continue
+
+    total_paid="$(jsonfilter -i "$f" -e '@.total_paid' 2>/dev/null)"
+    [ -z "$total_paid" ] && total_paid=0
+
+    last_coin="$(jsonfilter -i "$f" -e '@.last_coin_at' 2>/dev/null)"
+    [ -z "$last_coin" ] && last_coin=0
+
+    session_start="$(jsonfilter -i "$f" -e '@.session_start_at' 2>/dev/null)"
+    [ -z "$session_start" ] && session_start=0
+
+    expire_s="$(jsonfilter -i "$f" -e '@.expire_seconds' 2>/dev/null)"
+    [ -z "$expire_s" ] && expire_s=0
+
+    # Freeze the session - remaining time is now stored in paused_remaining
+    write_session \
+      "$mac" \
+      "$expires_at" \
+      1 \
+      "$remaining" \
+      "$total_paid" \
+      "$last_coin" \
+      "$session_start" \
+      "$expire_s"
+
+    log "boot: froze session mac=$mac remaining=${remaining}s (brownout protection)"
+  done
+}
