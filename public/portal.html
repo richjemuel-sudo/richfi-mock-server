@@ -816,7 +816,7 @@ async function checkStatus() {
         let coinDetected = false;
 
         
-        const VALID_COINS = [5, 10, 20];
+        const VALID_COINS = [1, 5, 10, 20];
         const increase = backendTotal - totalAmount;
         if (backendTotal > totalAmount && VALID_COINS.includes(increase)) {
           totalAmount = backendTotal;

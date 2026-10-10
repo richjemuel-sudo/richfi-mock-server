@@ -607,11 +607,13 @@ coin)
       "$session_start_at" \
       "$session_expire_seconds"
 
-    #--------------------------------------------------------------------
-    # Resolve IP from customer's MAC FIRST.
-    # This fixed the previous problem where stale CLIENT_IP
-    # 192.168.1.110 was used instead of 192.168.1.128.
-    #--------------------------------------------------------------------
+   
+   #--------------------------------------------------------------------
+   # Resolve IP from customer's MAC FIRST.
+   # This fixed the previous problem where stale CLIENT_IP
+   # 192.168.1.110 was used instead of 192.168.1.128.
+   #--------------------------------------------------------------------
+  
 
     ip="$(mac_to_ip "$mac")"
 
@@ -650,15 +652,15 @@ coin)
 
   unlock_state
 
+
   #----------------------------------------------------------------------
-  # Authorize client + apply speed limit
+  # Authorize client
   #----------------------------------------------------------------------
+
 
   grant_access \
     "$grant_ip" \
     "$grant_secs"
-
-  apply_speed_limit "$mac"
 
   http_json \
     "200 OK" \
@@ -699,8 +701,6 @@ pause)
 
     deauth_access "$ip"
 
-    remove_speed_limit "$mac"
-
     remaining=0
 
   elif [ "$paused" != "1" ]; then
@@ -726,8 +726,6 @@ pause)
     ip="$(mac_to_ip "$mac")"
 
     deauth_access "$ip"
-
-    remove_speed_limit "$mac"
 
   else
 
@@ -814,8 +812,6 @@ resume)
     grant_access \
       "$ip" \
       "$remaining"
-
-    apply_speed_limit "$mac"
 
   else
 
@@ -952,8 +948,6 @@ kick)
     ip="$(mac_to_ip "$mac")"
 
     deauth_access "$ip"
-
-    remove_speed_limit "$mac"
 
   fi
 
@@ -1378,12 +1372,19 @@ redeem_voucher)
   [ -z "$vprice" ]   && vprice=0
   [ -z "$vsave" ]    && vsave=0
 
-  # Already used
+  # Already used — check if same MAC or different
   if [ "$vused" = "1" ]; then
-    flock -u 203 2>/dev/null; exec 203>&-
-    http_json \
-      "200 OK" \
-      '{"status":"error","message":"Voucher code already in use"}'
+    if [ "$vused_by" = "$mac" ]; then
+      flock -u 203 2>/dev/null; exec 203>&-
+      http_json \
+        "200 OK" \
+        '{"status":"error","message":"Voucher code already in use"}'
+    else
+      flock -u 203 2>/dev/null; exec 203>&-
+      http_json \
+        "200 OK" \
+        '{"status":"error","message":"Voucher code already in use"}'
+    fi
     exit 0
   fi
 
@@ -1443,16 +1444,13 @@ EOF
 
     ip="$(mac_to_ip "$mac")"
     [ -z "$ip" ] && ip="$CLIENT_IP"
-
     grant_access "$ip" "$new_remaining"
-
-    apply_speed_limit "$mac"
-
   fi
 
   unlock_mac
 
   # Update sales stats if save_sales is enabled
+  # vsave is stored as 1/0 integer; vprice truncated to int for expr
   vprice_int=$(printf '%.0f' "$vprice" 2>/dev/null || echo "${vprice%%.*}")
   [ -z "$vprice_int" ] && vprice_int=0
 

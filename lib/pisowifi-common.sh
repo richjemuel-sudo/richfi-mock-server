@@ -535,3 +535,73 @@ pause_all_active_sessions() {
     log "boot: froze session mac=$mac remaining=${remaining}s (brownout protection)"
   done
 }
+# --------------------------------------------------------------------------
+# Speed limiting helpers (tc HTB on br-lan)
+#
+# apply_speed_limit  <mac>  — call right after grant_client_access
+# remove_speed_limit <mac>  — call right after deauth_client_access
+# --------------------------------------------------------------------------
+
+get_speed_limit_mbps() {
+  local direction="$1"   # "upload" or "download"
+  local raw val
+  raw="$(jsonfilter -i "$CONFIG_FILE" -e "@.data_limit.$direction" 2>/dev/null)"
+  # strip trailing "Mbps" / "mbps", e.g. "5Mbps" -> "5"
+  val="${raw%[Mm]bps}"
+  [ -z "$val" ] && val="5"
+  echo "$val"
+}
+
+apply_speed_limit() {
+  local mac="$1"
+  local ip ul_mbps dl_mbps class_id
+
+  ip="$(mac_to_ip "$mac")"
+  [ -z "$ip" ] && { log "speed_limit: no IP for mac=$mac, skipping"; return 1; }
+
+  ul_mbps="$(get_speed_limit_mbps upload)"
+  dl_mbps="$(get_speed_limit_mbps download)"
+
+  # Use last octet of IP as class ID (e.g. 192.168.1.45 -> 1:45)
+  class_id="$(echo "$ip" | awk -F. '{print $4}')"
+  [ -z "$class_id" ] && class_id=100
+
+  # Tear down any previous class for this IP first (idempotent)
+  tc filter del dev br-lan parent 1: handle "$class_id" fw 2>/dev/null || true
+  tc class  del dev br-lan classid "1:$class_id"         2>/dev/null || true
+  iptables -t mangle -D FORWARD -s "$ip" -j MARK --set-mark "$class_id" 2>/dev/null || true
+  iptables -t mangle -D FORWARD -d "$ip" -j MARK --set-mark "$class_id" 2>/dev/null || true
+
+  # Add HTB class for this client
+  tc class add dev br-lan parent 1: classid "1:$class_id" htb \
+    rate "${ul_mbps}mbit" burst 15k
+
+  # Mark packets to/from this IP so tc can match them
+  iptables -t mangle -A FORWARD -s "$ip" -j MARK --set-mark "$class_id"
+  iptables -t mangle -D FORWARD -d "$ip" -j MARK --set-mark "$class_id" 2>/dev/null || true
+  iptables -t mangle -A FORWARD -d "$ip" -j MARK --set-mark "$class_id"
+
+  # Attach fw filter to direct marked packets into the class
+  tc filter add dev br-lan parent 1: protocol ip handle "$class_id" fw \
+    flowid "1:$class_id"
+
+  log "speed_limit: applied ul=${ul_mbps}Mbps dl=${dl_mbps}Mbps mac=$mac ip=$ip class=1:$class_id"
+}
+
+remove_speed_limit() {
+  local mac="$1"
+  local ip class_id
+
+  ip="$(mac_to_ip "$mac")"
+  [ -z "$ip" ] && { log "speed_limit: no IP for mac=$mac on remove, skipping"; return; }
+
+  class_id="$(echo "$ip" | awk -F. '{print $4}')"
+  [ -z "$class_id" ] && return
+
+  tc filter del dev br-lan parent 1: handle "$class_id" fw 2>/dev/null || true
+  tc class  del dev br-lan classid "1:$class_id"         2>/dev/null || true
+  iptables -t mangle -D FORWARD -s "$ip" -j MARK --set-mark "$class_id" 2>/dev/null || true
+  iptables -t mangle -D FORWARD -d "$ip" -j MARK --set-mark "$class_id" 2>/dev/null || true
+
+  log "speed_limit: removed for mac=$mac ip=$ip class=1:$class_id"
+}

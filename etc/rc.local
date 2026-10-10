@@ -1,4 +1,15 @@
+#!/bin/sh
 # Put your custom commands here that should be executed once
-# the system init finished. By default this file does nothing.
+# the system init finished.
+
+# Initialize HTB root qdisc on br-lan for per-client speed limiting
+tc qdisc del dev br-lan root 2>/dev/null || true
+tc qdisc add dev br-lan root handle 1: htb default 9999
+
+# Default unthrottled class for non-paying / unrecognized traffic
+tc class add dev br-lan parent 1: classid 1:9999 htb rate 100mbit burst 15k
+
+/www/cgi-bin/pisowifi-init
 
 exit 0
+
