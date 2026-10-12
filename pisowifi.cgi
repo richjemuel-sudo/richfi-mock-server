@@ -659,6 +659,7 @@ coin)
     "$grant_secs"
 
   apply_speed_limit "$mac"
+  schedule_deauth "$mac" "$grant_secs"
 
   http_json \
     "200 OK" \
@@ -697,7 +698,7 @@ pause)
 
     ip="$(mac_to_ip "$mac")"
 
-    deauth_access "$ip"
+    deauth_client_access "$mac"
 
     remove_speed_limit "$mac"
 
@@ -725,7 +726,7 @@ pause)
 
     ip="$(mac_to_ip "$mac")"
 
-    deauth_access "$ip"
+    deauth_client_access "$mac"
 
     remove_speed_limit "$mac"
 
@@ -816,6 +817,7 @@ resume)
       "$remaining"
 
     apply_speed_limit "$mac"
+    schedule_deauth "$mac" "$remaining"
 
   else
 

@@ -1,0 +1,18 @@
+#!/bin/sh
+. /www/cgi-bin/lib/pisowifi-common.sh
+SESS_DIR="/etc/pisowifi/sessions"
+cur="$(now)"
+for f in "$SESS_DIR"/*.json; do
+  [ -f "$f" ] || continue
+  paused="$(jsonfilter -i "$f" -e '@.paused' 2>/dev/null)"
+  [ "$paused" = "1" ] && continue
+  expires_at="$(jsonfilter -i "$f" -e '@.expires_at' 2>/dev/null)"
+  [ -z "$expires_at" ] && expires_at=0
+  remaining=$((expires_at - cur))
+  [ "$remaining" -gt 0 ] && continue
+  mac="$(jsonfilter -i "$f" -e '@.mac' 2>/dev/null)"
+  [ -z "$mac" ] && continue
+  if ndsctl json 2>/dev/null | grep -qi "\"$(echo "$mac" | tr 'A-Z' 'a-z')\""; then
+    deauth_client_access "$mac" && log "watchdog: deauthed expired session mac=$mac"
+  fi
+done

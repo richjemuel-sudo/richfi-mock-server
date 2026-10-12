@@ -1,0 +1,33 @@
+#!/bin/sh
+# ==========================================================================
+# pisowifi-sales-reset
+# Resets daily_sales or monthly_sales in state.json.
+# Usage: pisowifi-sales-reset daily|monthly
+# Install: called by cron (see /etc/crontabs/root)
+# ==========================================================================
+
+. /www/cgi-bin/lib/pisowifi-common.sh
+
+ACTION="$1"
+
+case "$ACTION" in
+  daily|monthly) ;;
+  *) log "sales-reset: unknown action '$ACTION'"; exit 1 ;;
+esac
+
+lock_state
+state_load_all
+
+case "$ACTION" in
+  daily)
+    ST_DAILY=0
+    log "sales-reset: daily_sales reset to 0"
+    ;;
+  monthly)
+    ST_MONTHLY=0
+    log "sales-reset: monthly_sales reset to 0"
+    ;;
+esac
+
+save_state_now
+unlock_state
